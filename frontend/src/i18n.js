@@ -31,6 +31,8 @@ const en={
   'Образователна симулация · Потоците и часовите профили са приблизителни.':'Educational simulation · Flows and hourly profiles are estimates.',
   'Енергийна карта на България':'Energy map of Bulgaria','Отвори енергийния асистент':'Open energy assistant',
   'Енергиен асистент':'Energy assistant','Свий чата':'Collapse chat','Връзка с AI':'AI connection',
+  'Промени ширината на картата и чата':'Resize map and chat',
+  'Плъзни за ширина · двойно щракване за нулиране':'Drag to resize · double-click to reset',
   'Ти':'You','AI подготвя отговор…':'AI is preparing a reply…','Няма връзка с backend-а':'Backend unavailable',
   'AI не е настроен · нужен е API ключ':'AI not configured · API key required',
   'Groq · тестов AI':'Groq · testing AI','AI · свързан':'AI · connected',

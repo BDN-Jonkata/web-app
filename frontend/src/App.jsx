@@ -11,6 +11,7 @@ import {useChatHistory} from './useChatHistory.js';
 import {formatNumber} from './i18n.js';
 import {useDictation} from './useDictation.js';
 import {SPEECH_ERRORS} from './speechRecognition.js';
+import PanelDivider,{usePanelWidth} from './PanelDivider.jsx';
 
 const INITIAL=INITIAL_STATE;
 
@@ -276,7 +277,7 @@ function Chat({state,setState,collapsed,setCollapsed}) {
   if(collapsed)return <button className="chat-open" aria-label={t('Отвори енергийния асистент')} onClick={()=>setCollapsed(false)}>
     <MessageSquare size={20}/><span>{t('Енергиен асистент')}</span><ChevronLeft size={18}/>
   </button>;
-  return <aside className="chat" aria-label={t('Енергиен асистент')}>
+  return <aside id="energy-chat" className="chat" aria-label={t('Енергиен асистент')}>
     <header inert={sidebarOpen}>
       <div className="chat-logo"><Zap size={19} fill="currentColor"/></div>
       <div><strong>{t('Енергиен асистент')}</strong><span className={aiStatus.error||aiStatus.configured===false?'ai-offline':''}><i/> {t(statusText)}</span></div>
@@ -324,6 +325,8 @@ function Chat({state,setState,collapsed,setCollapsed}) {
 
 export default function App() {
   const {t,user}=useAppSettings();
+  const container=useRef(null);
+  const sizing=usePanelWidth(container);
   const [state,setState]=useState(INITIAL),[chatCollapsed,setChatCollapsed]=useState(false);
   const sim=useMemo(()=>simulate(state),[state]);
   useEffect(()=>{
@@ -332,8 +335,8 @@ export default function App() {
     return ()=>clearInterval(timer);
   },[state.playing]);
   const toggleLayer=key=>setState(s=>({...s,layers:{...s.layers,[key]:!s.layers[key]}}));
-  return <div className={'energy-app '+(chatCollapsed?'chat-collapsed':'')}>
-    <main>
+  return <div ref={container} style={{'--chat-width':sizing.value+'px'}} className={'energy-app '+(chatCollapsed?'chat-collapsed':'')}>
+    <main id="energy-dashboard">
       <header className="top">
         <div className="brand"><div><Zap size={19} fill="currentColor"/></div><span><strong>{t('Енергия')}</strong><small>{t('България')}</small></span></div>
         <div className="top-center"><b>{t(SEASONS[state.season].name)}</b><span className="time-divider"/><strong>{clock(state.hour)}</strong><em><i/>{t('СИМУЛАЦИЯ')}</em></div>
@@ -372,6 +375,7 @@ export default function App() {
         <footer><Info size={12}/>{t('Образователна симулация · Потоците и часовите профили са приблизителни.')}</footer>
       </div>
     </main>
+    {!chatCollapsed&&<PanelDivider container={container} sizing={sizing} t={t}/>}
     <Chat key={user?.id||'guest'} state={state} setState={setState} collapsed={chatCollapsed} setCollapsed={setChatCollapsed}/>
   </div>;
 }
