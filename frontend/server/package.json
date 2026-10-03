@@ -1,0 +1,18 @@
+{
+  "name": "energy-bulgaria-server",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch src/index.js",
+    "start": "node src/index.js",
+    "test": "node src/ai.test.js && node src/accounts.test.js"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.8.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.5.0",
+    "express": "^5.1.0",
+    "prisma": "^6.8.2"
+  }
+}
