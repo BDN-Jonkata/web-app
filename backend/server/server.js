@@ -3,6 +3,9 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { createApp } from '../src/app.js';
 import { createOpenApiSpec } from '../src/openapi/openapi.js';
+import { loadBackendEnvironment } from '../src/environment.js';
+
+loadBackendEnvironment();
 
 const port = Number(process.env.PORT) || 3001;
 const openApiSpec = createOpenApiSpec(port);

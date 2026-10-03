@@ -73,6 +73,19 @@ export function createAccountService({database=getDatabase,now=()=>new Date()}={
       return session&&session.user&&session.user.isActive!==false&&session.expiresAt>now()?publicUser(session.user):null;
     },
     async logout(token) {if(token)await database().session.deleteMany({where:{tokenHash:tokenHash(token)}})},
+    async refreshToken(token) {
+      if(!token)throw accountError(401,'INVALID_TOKEN','Липсва валиден токен.');
+      const db=database(),session=await db.session.findUnique({where:{tokenHash:tokenHash(token)},include:{user:true}});
+      if(!session||!session.user||session.user.isActive===false||session.expiresAt<=now())throw accountError(401,'INVALID_TOKEN','Невалидна или изтекла сесия.');
+      await db.session.deleteMany({where:{tokenHash:tokenHash(token)}});
+      return issueSession(db,session.user);
+    },
+    async forgotPassword(input) {
+      const email=typeof input?.email==='string'?input.email.trim().toLowerCase():'';
+      if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)||email.length>254)throw accountError(400,'INVALID_EMAIL','Въведи валиден имейл.');
+      await database().user.findUnique({where:{email}});
+      return {ok:true,message:'Ако профилът съществува, изпратени са инструкции за възстановяване на паролата.'};
+    },
     async preferences(userId,input) {
       if(!THEMES.includes(input?.theme)||!LANGUAGES.includes(input?.language))throw accountError(400,'INVALID_PREFERENCES','Невалидни настройки.');
       return publicUser(await database().user.update({where:{id:userId},data:{preferences:normalizePreferences(input)}}));
