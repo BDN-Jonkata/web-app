@@ -7,6 +7,7 @@ function createMockReqRes({ method = 'GET', url = '/', body = {}, headers = {} }
   let responseData = null;
   const responseHeaders = {};
   const listeners = {};
+  const writtenChunks = [];
 
   const req = {
     method,
@@ -34,10 +35,14 @@ function createMockReqRes({ method = 'GET', url = '/', body = {}, headers = {} }
     setHeader(key, value) {
       responseHeaders[key] = value;
     },
-    write(_chunk) {},
+    flushHeaders() {},
+    write(chunk) {
+      writtenChunks.push(chunk);
+    },
     getStatus: () => statusCode,
     getData: () => responseData,
     getHeaders: () => responseHeaders,
+    getChunks: () => writtenChunks,
   };
 
   return { req, res };
@@ -91,8 +96,41 @@ test('simulationRoutes: POST /decision validates and ingests simulation JSON', a
   assert.equal(res.getStatus(), 200);
   assert.equal(res.getData().success, true);
   assert.equal(res.getData().totalSteps, 1);
+  assert.equal(res.getData().isTimeline, false);
   assert.equal(store.get()?.prompt, payload.prompt);
   assert.equal(store.get()?.frames[0].stats.res, 1450);
+});
+
+test('simulationRoutes: POST /decision ingests multi-step timeline simulations', async () => {
+  const store = createInMemorySimulationStore();
+  const router = createSimulationRouter({ store });
+
+  const timelinePayload = {
+    prompt: '2-step evening ramp simulation',
+    decision: { answer: 'Step 0 and step 1 executed.' },
+    frames: [
+      {
+        step: 0,
+        hour: 18,
+        stats: { res: 1000, demand: 3000 },
+        map: { sites: { belovo: { output: 500 } } },
+      },
+      {
+        step: 1,
+        hour: 19,
+        stats: { res: 1400, demand: 3800 },
+        map: { sites: { belovo: { output: 700 } } },
+      },
+    ],
+  };
+
+  const { req, res } = createMockReqRes({ method: 'POST', url: '/decision', body: timelinePayload });
+  const handler = router.stack.find(layer => layer.route?.path === '/decision')?.route.stack[0].handle;
+
+  await handler(req, res);
+  assert.equal(res.getStatus(), 200);
+  assert.equal(res.getData().totalSteps, 2);
+  assert.equal(res.getData().isTimeline, true);
 });
 
 test('simulationRoutes: POST /decision rejects invalid JSON with 400', async () => {
@@ -107,17 +145,71 @@ test('simulationRoutes: POST /decision rejects invalid JSON with 400', async () 
   assert.equal(res.getData().code, 'INVALID_SIMULATION_PAYLOAD');
 });
 
-test('simulationRoutes: POST /reset clears in-memory active simulation', async () => {
+test('simulationRoutes: POST /reset clears in-memory active simulation idempotently', async () => {
   const store = createInMemorySimulationStore();
   const router = createSimulationRouter({ store });
 
   store.set({ id: 'test-123', prompt: 'test' });
   assert.ok(store.get());
 
-  const { req, res } = createMockReqRes({ method: 'POST', url: '/reset' });
-  const handler = router.stack.find(layer => layer.route?.path === '/reset')?.route.stack[0].handle;
+  const resetHandler = router.stack.find(layer => layer.route?.path === '/reset')?.route.stack[0].handle;
 
-  await handler(req, res);
-  assert.equal(res.getStatus(), 200);
+  // First reset
+  const mock1 = createMockReqRes({ method: 'POST', url: '/reset' });
+  await resetHandler(mock1.req, mock1.res);
+  assert.equal(mock1.res.getStatus(), 200);
   assert.equal(store.get(), null);
+
+  // Second reset when already idle (idempotency check)
+  const mock2 = createMockReqRes({ method: 'POST', url: '/reset' });
+  await resetHandler(mock2.req, mock2.res);
+  assert.equal(mock2.res.getStatus(), 200);
+  assert.equal(store.get(), null);
+});
+
+test('simulationRoutes: GET /events streams SSE events and broadcasts to multiple subscribers', async () => {
+  const store = createInMemorySimulationStore();
+  const router = createSimulationRouter({ store });
+
+  const eventsHandler = router.stack.find(layer => layer.route?.path === '/events')?.route.stack[0].handle;
+  const decisionHandler = router.stack.find(layer => layer.route?.path === '/decision')?.route.stack[0].handle;
+  const resetHandler = router.stack.find(layer => layer.route?.path === '/reset')?.route.stack[0].handle;
+
+  // Client 1 connects
+  const client1 = createMockReqRes({ method: 'GET', url: '/events' });
+  await eventsHandler(client1.req, client1.res);
+  assert.equal(client1.res.getHeaders()['Content-Type'], 'text/event-stream');
+  assert.equal(store.clientCount(), 1);
+  assert.ok(client1.res.getChunks().some(chunk => chunk.includes('event: init')));
+
+  // Client 2 connects
+  const client2 = createMockReqRes({ method: 'GET', url: '/events' });
+  await eventsHandler(client2.req, client2.res);
+  assert.equal(store.clientCount(), 2);
+
+  // Trigger POST /decision: both clients must receive event: update
+  const payload = {
+    prompt: 'Live SSE broadcast test',
+    components: { stats: { res: 500, demand: 800 } },
+  };
+  const decisionMock = createMockReqRes({ method: 'POST', url: '/decision', body: payload });
+  await decisionHandler(decisionMock.req, decisionMock.res);
+
+  assert.ok(client1.res.getChunks().some(chunk => chunk.includes('event: update') && chunk.includes('Live SSE broadcast test')));
+  assert.ok(client2.res.getChunks().some(chunk => chunk.includes('event: update') && chunk.includes('Live SSE broadcast test')));
+
+  // Trigger POST /reset: both clients must receive event: reset
+  const resetMock = createMockReqRes({ method: 'POST', url: '/reset' });
+  await resetHandler(resetMock.req, resetMock.res);
+
+  assert.ok(client1.res.getChunks().some(chunk => chunk.includes('event: reset')));
+  assert.ok(client2.res.getChunks().some(chunk => chunk.includes('event: reset')));
+
+  // Client 1 disconnects: client count drops
+  client1.req.emit('close');
+  assert.equal(store.clientCount(), 1);
+
+  // Client 2 disconnects
+  client2.req.emit('close');
+  assert.equal(store.clientCount(), 0);
 });
