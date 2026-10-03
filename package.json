@@ -10,7 +10,8 @@
     "start": "npm run start --prefix backend",
     "db:generate": "npm run db:generate --prefix backend",
     "db:push": "npm run db:push --prefix backend",
-    "db:migrate": "npm run db:migrate --prefix backend"
+    "db:migrate": "npm run db:migrate --prefix backend",
+    "db:studio": "npm run db:studio --prefix backend"
   },
   "devDependencies": {
     "concurrently": "^9.1.2"

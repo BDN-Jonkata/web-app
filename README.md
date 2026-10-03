@@ -6,6 +6,12 @@ React интерфейс и Express backend за образователна си
 
 ## Структура на проекта
 
+`web-app` е името на GitHub repository-то и папката на клонираното repository.
+Няма втори вложен `web-app/`: `frontend/`, `backend/`, `shared/` и общият
+`package.json` са директно в корена. Същата структура се използва във всички
+работни branches. При клониране на repository-то изпълнявай общите npm команди
+от този корен, а не от несъществуваща вътрешна папка.
+
 ```text
 web-app/
 ├── frontend/           React, Vite и всички UI файлове
@@ -25,6 +31,12 @@ web-app/
 на симулацията и входната валидация. Коренът съдържа само общите npm команди,
 lockfile, `.gitignore` и тази документация. Микрофонът е frontend функция;
 Groq ключът и достъпът до PostgreSQL остават само в backend-а.
+
+Главният API се стартира от `backend/src/index.js` на порт 3001. Запазен е и
+отделният минимален health demo на съотборника в `backend/server/server.js`;
+той не заменя API-то за вход, история и AI. По желание го стартирай с
+`npm run dev:demo --prefix backend` (порт 3000 по подразбиране).
+Prisma Studio се отваря с `npm run db:studio`, използвайки backend конфигурацията.
 
 ## Стартиране
 

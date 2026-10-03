@@ -19,6 +19,21 @@ test('the applications have one frontend and one backend, without duplicate lega
   for(const directory of ['frontend','backend','shared'])assert.ok(existsSync(resolve(root,directory)),directory);
   for(const directory of ['client','server'])assert.equal(existsSync(resolve(root,directory)),false,directory);
 });
+test('the repository root is the application root, without a nested web-app folder',()=>{
+  assert.equal(existsSync(resolve(root,'web-app')),false);
+  for(const path of ['package.json','package-lock.json','.gitignore','README.md','shared/chatContract.js']){
+    assert.ok(existsSync(resolve(root,path)),path);
+  }
+});
+test('the real API stays the default while the separate health demo is preserved',()=>{
+  const backend=json('backend/package.json');
+  assert.equal(backend.scripts.dev,'node --watch src/index.js');
+  assert.equal(backend.scripts.start,'node src/index.js');
+  assert.equal(backend.scripts['dev:demo'],'node --watch server/server.js');
+  assert.equal(backend.scripts['db:studio'],'node scripts/prisma.mjs studio');
+  assert.ok(existsSync(resolve(root,'backend/server/server.js')));
+  assert.match(read('frontend/vite.config.js'),/127\.0\.0\.1:3001/);
+});
 test('all UI entry points, map assets, fonts and frontend tools live in frontend',()=>{
   for(const path of ['frontend/index.html','frontend/vite.config.js','frontend/src/main.jsx','frontend/src/App.jsx',
     'frontend/src/useDictation.js','frontend/src/speechRecognition.js','frontend/src/styles.css',
