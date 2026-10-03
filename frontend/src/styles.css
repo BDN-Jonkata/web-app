@@ -36,11 +36,21 @@ button:focus-visible,input:focus-visible,textarea:focus-visible {
 button { transition: background .16s,color .16s,border-color .16s,box-shadow .16s; }
 ::selection { color: var(--ink); background: #d8ed93aa; }
 .energy-app {
-  display: grid; grid-template-columns: minmax(0,1fr) 450px;
+  display: grid; grid-template-columns: minmax(0,1fr) 8px var(--chat-width,450px);
   height: 100dvh; overflow: hidden;
 }
 .energy-app.chat-collapsed { grid-template-columns: minmax(0,1fr) 54px; }
-.energy-app>main { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.energy-app>main { min-width: 0; min-height: 0; display: flex; flex-direction: column; container-type: inline-size; }
+.panel-divider {
+  display: flex; align-items: center; justify-content: center;
+  background: var(--paper); border-inline: 1px solid var(--line);
+  cursor: col-resize; touch-action: none; user-select: none;
+}
+.panel-divider>span { width: 3px; height: 42px; border-radius: 4px; background: var(--line); }
+.panel-divider:hover,.panel-divider.dragging { background: var(--soft,#edf3e5); }
+.panel-divider:hover>span,.panel-divider.dragging>span,.panel-divider:focus-visible>span { background: var(--muted); }
+.panel-divider:focus-visible { outline: 2px solid var(--muted); outline-offset: -2px; }
+.energy-app:has(.panel-divider.dragging) { user-select: none; cursor: col-resize; }
 
 /* Full-bleed dashboard: keep the existing positions and panel widths. */
 .top {
@@ -348,7 +358,7 @@ footer svg { flex: 0 0 auto; opacity: .75; }
   html,body,#root { height: 100%; overflow: hidden; }
 }
 @media (min-width:781px) and (max-width:1050px) {
-  .energy-app { grid-template-columns: minmax(0,1fr) 370px; }
+  .energy-app { grid-template-columns: minmax(0,1fr) 8px var(--chat-width,370px); }
   .energy-app.chat-collapsed { grid-template-columns: minmax(0,1fr) 54px; }
   .top { padding: 0 15px; }
   .brand>span { gap: 3px; }
@@ -361,6 +371,7 @@ footer svg { flex: 0 0 auto; opacity: .75; }
 }
 @media (max-width:780px) {
   .energy-app,.energy-app.chat-collapsed { display: block; height: auto; overflow: visible; }
+  .panel-divider { display: none; }
   .top { padding: 0 15px; }
   .top-center { display: none; }
   .content { display: block; }
@@ -380,6 +391,17 @@ footer svg { flex: 0 0 auto; opacity: .75; }
   .chat-open { height: 54px; flex-direction: row; padding: 0 18px; border-left: 0; border-top: 1px solid var(--line); }
   .chat-open>span { writing-mode: horizontal-tb; flex: 1; margin: 0; text-align: left; }
   footer { padding: 5px 12px; text-align: center; }
+}
+@media (min-width:781px) {
+ @container (max-width:700px) {
+  .top { padding: 0 15px; }
+  .top-center em { display: none; }
+  .stats { grid-template-columns: 1fr 1fr; }
+  .stats>div:nth-child(2) { border-right: 0; }
+  .stats>div:nth-child(-n+2) { border-bottom: 1px solid var(--line); }
+  .controls { flex-wrap: wrap; gap: 12px; }
+  .control { min-width: 125px; }
+ }
 }
 @media (prefers-reduced-motion:reduce) {
   *,*::before,*::after { transition: none !important; }
