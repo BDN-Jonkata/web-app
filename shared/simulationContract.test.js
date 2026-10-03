@@ -1,0 +1,152 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  normalizeSimulationPayload,
+  sanitizeStats,
+  sanitizeMap,
+  sanitizeFrame,
+  extractActiveFrame,
+} from './simulationContract.js';
+
+test('normalizeSimulationPayload validates and normalizes a multi-step timeline payload', () => {
+  const payload = {
+    prompt: 'Winter cold snap with peak heating demand at 19:00',
+    decision: {
+      answer: 'Belovo hydro dispatched to max capacity; demand response active in Sofia.',
+      summary: 'Renewables covered 34% (1,450 MW). Deficit of 2,826 MW balanced.',
+      actions: [
+        { component: 'hydro', action: 'dispatch_max', target: 'belovo', value: 736 },
+      ],
+    },
+    scenario: {
+      season: 'winter',
+      cloud: 90,
+      wind: 20,
+      hour: 19,
+    },
+    frames: [
+      {
+        step: 0,
+        hour: 18,
+        label: '18:00 Ramp-up',
+        stats: {
+          res: 1200,
+          demand: 3800,
+          mw: { solar: 10, wind: 60, hydro: 1100, other: 30 },
+          sectors: [{ label: 'Индустрия', mw: 1600, pct: 0.42 }],
+        },
+        map: {
+          sites: {
+            belovo: { output: 600, status: 'ramping' },
+            pazardzhik: { output: 10, status: 'sunset' },
+          },
+          cities: {
+            sofia: { demand: 1400, resReceived: 350 },
+          },
+          flows: [
+            { from: 'belovo', to: 'sofia', mw: 300 },
+          ],
+        },
+      },
+      {
+        step: 1,
+        hour: 19,
+        label: '19:00 Peak Demand',
+        stats: {
+          res: 1450,
+          demand: 4276,
+          mw: { solar: 0, wind: 76, hydro: 1339, other: 35 },
+          sectors: [{ label: 'Индустрия', mw: 1710, pct: 0.40 }],
+        },
+        map: {
+          sites: {
+            belovo: { output: 736.2, status: 'peaking_max' },
+            pazardzhik: { output: 0, status: 'night' },
+          },
+          cities: {
+            sofia: { demand: 1546, resReceived: 380 },
+          },
+        },
+      },
+    ],
+  };
+
+  const normalized = normalizeSimulationPayload(payload);
+  assert.equal(normalized.prompt, payload.prompt);
+  assert.equal(normalized.decision.answer, payload.decision.answer);
+  assert.equal(normalized.totalSteps, 2);
+  assert.equal(normalized.isTimeline, true);
+
+  const frame0 = extractActiveFrame(normalized, 0);
+  assert.equal(frame0.step, 0);
+  assert.equal(frame0.stats.res, 1200);
+  assert.equal(frame0.map.sites.belovo.output, 600);
+
+  const frame1 = extractActiveFrame(normalized, 1);
+  assert.equal(frame1.step, 1);
+  assert.equal(frame1.stats.res, 1450);
+  assert.equal(frame1.stats.balance, -2826);
+  assert.equal(frame1.map.sites.belovo.output, 736.2);
+});
+
+test('normalizeSimulationPayload accepts a single-snapshot with top-level components', () => {
+  const payload = {
+    prompt: 'Solar noon peak',
+    decision: {
+      answer: 'Solar generation at maximum throughout Thrace.',
+    },
+    components: {
+      stats: {
+        res: 3200,
+        demand: 3600,
+        mw: { solar: 2400, wind: 300, hydro: 450, other: 50 },
+      },
+      map: {
+        sites: {
+          pazardzhik: { output: 280, status: 'max_solar' },
+        },
+        cities: {
+          plovdiv: { demand: 550, resReceived: 400 },
+        },
+      },
+    },
+  };
+
+  const normalized = normalizeSimulationPayload(payload);
+  assert.equal(normalized.totalSteps, 1);
+  assert.equal(normalized.isTimeline, false);
+  const frame = extractActiveFrame(normalized, 0);
+  assert.ok(frame);
+  assert.equal(frame.stats.res, 3200);
+  assert.equal(frame.map.sites.pazardzhik.output, 280);
+});
+
+test('incomplete or missing component data is omitted and not visualized', () => {
+  // If stats is missing mandatory numbers, it is returned as null
+  const invalidStats = sanitizeStats({ mw: { solar: 100 } });
+  assert.equal(invalidStats, null);
+
+  // If a site output is not numeric or negative, it is stripped
+  const sanitizedMap = sanitizeMap({
+    sites: {
+      belovo: { output: 'corrupt' },
+      pazardzhik: { output: -50 },
+      sliven: { output: 200 },
+    },
+    cities: {
+      sofia: { demand: 1200 },
+      invalid_city_id: { demand: 500 },
+    },
+  });
+  assert.equal(sanitizedMap.sites.belovo, undefined);
+  assert.equal(sanitizedMap.sites.pazardzhik, undefined);
+  assert.equal(sanitizedMap.sites.sliven.output, 200);
+  assert.equal(sanitizedMap.cities.sofia.demand, 1200);
+  assert.equal(sanitizedMap.cities.invalid_city_id, undefined);
+});
+
+test('throws clear TypeError when payload is missing prompt or components', () => {
+  assert.throws(() => normalizeSimulationPayload(null), /Невалиден формат/);
+  assert.throws(() => normalizeSimulationPayload({}), /Липсва prompt/);
+  assert.throws(() => normalizeSimulationPayload({ prompt: 'test' }), /трябва да съдържа поне един кадър/);
+});

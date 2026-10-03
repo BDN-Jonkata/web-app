@@ -8,7 +8,7 @@
     "start": "node src/index.js",
     "dev:demo": "node --watch server/server.js",
     "dev:open": "node --watch src/index.js --open",
-    "test": "node src/ai.test.js && node src/accounts.test.js && node src/environment.test.js && node src/userProfiles.test.js && node src/DAOs/daos.test.js && node src/DTOs/dtos.test.js && node server/server.test.js",
+    "test": "node src/ai.test.js && node src/accounts.test.js && node src/environment.test.js && node src/userProfiles.test.js && node src/DAOs/daos.test.js && node src/DTOs/dtos.test.js && node src/simulationRoutes.test.js && node server/server.test.js",
     "db:generate": "node scripts/prisma.mjs generate",
     "db:push": "node scripts/prisma.mjs db push",
     "db:migrate": "node scripts/prisma.mjs migrate deploy",
@@ -20,6 +20,7 @@
     "cors": "^2.8.6",
     "dotenv": "^16.5.0",
     "express": "^5.1.0",
+    "nodemailer": "^10.0.14",
     "prisma": "^6.8.2"
   }
 }

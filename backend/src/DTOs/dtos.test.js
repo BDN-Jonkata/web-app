@@ -67,7 +67,7 @@ test('userDto sanitizes passwords, outputs profiles and formats auth responses',
   // Input validation
   const valid = userDto.fromRegisterInput({
     email: ' TEST@EXAMPLE.COM ',
-    password: 'a very long valid password 12345',
+    password: 'valid-password-123',
     name: ' Alexander ',
     preferences: { theme: 'dark' },
   });
@@ -75,9 +75,14 @@ test('userDto sanitizes passwords, outputs profiles and formats auth responses',
   assert.equal(valid.name, 'Alexander');
   assert.equal(valid.preferences.theme, 'dark');
 
-  assert.throws(() => userDto.fromRegisterInput({ email: 'bad-email', password: 'valid long password 12345', name: 'Al' }));
-  assert.throws(() => userDto.fromRegisterInput({ email: 'ok@a.bg', password: 'short', name: 'Al' }));
-  assert.throws(() => userDto.fromRegisterInput({ email: 'ok@a.bg', password: 'valid long password 12345', name: 'A' }));
+  // Boundary testing: 5 rejected, 6 accepted, 30 accepted, 31 rejected
+  assert.throws(() => userDto.fromRegisterInput({ email: 'ok@a.bg', password: '12345', name: 'Alex' }), (err) => err.code === 'INVALID_PASSWORD');
+  assert.doesNotThrow(() => userDto.fromRegisterInput({ email: 'ok@a.bg', password: '123456', name: 'Alex' }));
+  assert.doesNotThrow(() => userDto.fromRegisterInput({ email: 'ok@a.bg', password: 'a'.repeat(30), name: 'Alex' }));
+  assert.throws(() => userDto.fromRegisterInput({ email: 'ok@a.bg', password: 'a'.repeat(31), name: 'Alex' }), (err) => err.code === 'INVALID_PASSWORD');
+
+  assert.throws(() => userDto.fromRegisterInput({ email: 'bad-email', password: 'valid-password-123', name: 'Al' }));
+  assert.throws(() => userDto.fromRegisterInput({ email: 'ok@a.bg', password: 'valid-password-123', name: 'A' }));
 
   const update = userDto.fromUpdateInput({
     bio: 'Updated bio',

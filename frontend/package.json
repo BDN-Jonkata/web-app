@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node src/mapLabels.test.js && node src/settings.test.js && node src/drawer.test.js && node src/speechRecognition.test.js",
+    "test": "node src/mapLabels.test.js && node src/settings.test.js && node src/drawer.test.js && node src/speechRecognition.test.js && node src/simulationVisualization.test.js",
     "map:render": "node scripts/render-map.mjs"
   },
   "dependencies": {

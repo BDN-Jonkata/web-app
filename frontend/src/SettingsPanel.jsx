@@ -21,8 +21,8 @@ function AuthDialog({onClose}) {
     <form onSubmit={submit}>
       {mode==='register'&&<label>{t('Име')}<input name="name" autoComplete="name" minLength={2} maxLength={60} required disabled={pending}/></label>}
       <label>{t('Имейл')}<input name="email" type="email" autoComplete="username" maxLength={254} autoFocus required disabled={pending}/></label>
-      <label>{t('Парола')}<input name="password" type="password" autoComplete={mode==='register'?'new-password':'current-password'} minLength={mode==='register'?15:1}
-        maxLength={128} required disabled={pending}/>{mode==='register'&&<small>{t('Поне 15 знака')}</small>}</label>
+      <label>{t('Парола')}<input name="password" type="password" autoComplete={mode==='register'?'new-password':'current-password'} minLength={mode==='register'?6:1}
+        maxLength={30} required disabled={pending}/>{mode==='register'&&<small>{t('Поне 6 знака')}</small>}</label>
       {error&&<p className="ui-notice" role="alert">{errorText(error)}</p>}
       <button className="primary-button" disabled={pending} type="submit">{t(pending?'Зареждане…':mode==='register'?'Създай профил':'Вход')}</button>
     </form>

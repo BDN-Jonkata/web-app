@@ -32,6 +32,10 @@ export function createOpenApiSpec(port = 3001) {
         description: 'Current host origin',
       },
     ],
+    security: [
+      { bearerAuth: [] },
+      { cookieAuth: [] },
+    ],
     tags: [
       {
         name: 'Authentication',
@@ -48,6 +52,10 @@ export function createOpenApiSpec(port = 3001) {
       {
         name: 'Health',
         description: 'Server health check, metrics, and runtime diagnostics',
+      },
+      {
+        name: 'AI Simulation & Decisions',
+        description: 'Endpoints for ingesting, querying, and resetting AI simulation decisions and per-component frames',
       },
     ],
     paths: {
@@ -119,7 +127,7 @@ export function createOpenApiSpec(port = 3001) {
                   type: 'object',
                   properties: {
                     email: { type: 'string', format: 'email', example: 'user@example.test' },
-                    password: { type: 'string', minLength: 15, maxLength: 128, example: 'a secure long passphrase 12345' },
+                    password: { type: 'string', minLength: 6, maxLength: 30, example: 'securePass123' },
                     name: { type: 'string', minLength: 2, maxLength: 60, example: 'Георги Димитров' },
                     preferences: {
                       type: 'object',
@@ -136,14 +144,20 @@ export function createOpenApiSpec(port = 3001) {
           },
           responses: {
             '201': {
-              description: 'Account successfully registered and session issued.',
+              description: 'Account successfully registered and session issued with access token.',
               content: {
                 'application/json': {
                   schema: {
                     type: 'object',
                     properties: {
                       user: { $ref: '#/components/schemas/UserProfile' },
+                      token: {
+                        type: 'string',
+                        description: 'Opaque session access token (visualized for Scalar/API testing; also issued as HttpOnly cookie).',
+                        example: 'vXz9_session_token_example_1234567890abcdefghij',
+                      },
                     },
+                    required: ['user', 'token'],
                   },
                 },
               },
@@ -157,7 +171,7 @@ export function createOpenApiSpec(port = 3001) {
       '/api/auth/login': {
         post: {
           summary: 'User login',
-          description: 'Authenticates user credentials, sets an HttpOnly session cookie, and returns user profile.',
+          description: 'Authenticates user credentials, sets an HttpOnly session cookie, and returns user profile and access token.',
           tags: ['Authentication'],
           parameters: [csrfHeaderParam],
           requestBody: {
@@ -177,14 +191,20 @@ export function createOpenApiSpec(port = 3001) {
           },
           responses: {
             '200': {
-              description: 'Authentication successful.',
+              description: 'Authentication successful with access token returned.',
               content: {
                 'application/json': {
                   schema: {
                     type: 'object',
                     properties: {
                       user: { $ref: '#/components/schemas/UserProfile' },
+                      token: {
+                        type: 'string',
+                        description: 'Opaque session access token (visualized for Scalar/API testing; also issued as HttpOnly cookie).',
+                        example: 'vXz9_session_token_example_1234567890abcdefghij',
+                      },
                     },
+                    required: ['user', 'token'],
                   },
                 },
               },
@@ -255,11 +275,11 @@ export function createOpenApiSpec(port = 3001) {
           },
         },
       },
-      '/api/auth/forgot-password': {
+      '/api/auth/reset-password': {
         post: {
-          summary: 'Forgot password request',
+          summary: 'Change or reset password',
           description:
-            'Initiates a password recovery workflow for the specified email address without leaking account existence.',
+            'Updates the user password (6-30 characters). Accepts either an active session access token (via Bearer header or token field) or an HMAC reset token received by email.',
           tags: ['Authentication'],
           parameters: [csrfHeaderParam],
           requestBody: {
@@ -269,32 +289,35 @@ export function createOpenApiSpec(port = 3001) {
                 schema: {
                   type: 'object',
                   properties: {
-                    email: { type: 'string', format: 'email', example: 'user@example.test' },
+                    token: {
+                      type: 'string',
+                      description:
+                        'Active session access token OR email reset token. Optional if authenticated via Bearer token.',
+                      example: 'UCdCve4kcgj9UbJSSlAJ72NVt8ca7RQJihbOSR0cLgI',
+                    },
+                    password: { type: 'string', minLength: 6, maxLength: 30, example: 'newPassword123' },
                   },
-                  required: ['email'],
+                  required: ['password'],
                 },
               },
             },
           },
           responses: {
             '200': {
-              description: 'Password reset request acknowledged.',
+              description: 'Password successfully updated.',
               content: {
                 'application/json': {
                   schema: {
                     type: 'object',
                     properties: {
                       ok: { type: 'boolean', example: true },
-                      message: {
-                        type: 'string',
-                        example: 'Ако профилът съществува, изпратени са инструкции за възстановяване на паролата.',
-                      },
+                      message: { type: 'string', example: 'Паролата е успешно променена.' },
                     },
                   },
                 },
               },
             },
-            '400': { description: 'Invalid email address provided.' },
+            '400': { description: 'Invalid password length or invalid/expired token.' },
           },
         },
       },
@@ -580,9 +603,185 @@ export function createOpenApiSpec(port = 3001) {
           },
         },
       },
+      '/api/simulation/decision': {
+        post: {
+          summary: 'Ingest AI simulation decision and component data',
+          description:
+            'Receives an exact JSON simulation payload from an AI agent or test runner, validates per-component frames, updates in-memory active simulation, and broadcasts to connected frontend clients.',
+          tags: ['AI Simulation & Decisions'],
+          parameters: [csrfHeaderParam],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    prompt: { type: 'string', example: 'Winter blizzard at 19:00 with Belovo hydro peaking dispatch' },
+                    decision: {
+                      type: 'object',
+                      properties: {
+                        answer: { type: 'string', example: 'Belovo hydro dispatched to 100% capacity.' },
+                        summary: { type: 'string', example: 'Peak covered by hydro and Kozloduy NPP.' },
+                        actions: {
+                          type: 'array',
+                          items: {
+                            type: 'object',
+                            properties: {
+                              component: { type: 'string', example: 'hydro' },
+                              action: { type: 'string', example: 'dispatch_max' },
+                              target: { type: 'string', example: 'belovo' },
+                              value: { type: 'number', example: 736 },
+                            },
+                          },
+                        },
+                      },
+                      required: ['answer'],
+                    },
+                    scenario: {
+                      type: 'object',
+                      properties: {
+                        season: { type: 'string', enum: ['winter', 'spring', 'summer', 'autumn'], example: 'winter' },
+                        hour: { type: 'number', example: 19 },
+                        cloud: { type: 'number', example: 95 },
+                        wind: { type: 'number', example: 25 },
+                      },
+                    },
+                    components: {
+                      type: 'object',
+                      description: 'Top-level component snapshot (or supply frames array for multi-step timelines)',
+                      properties: {
+                        stats: {
+                          type: 'object',
+                          properties: {
+                            res: { type: 'number', example: 1450 },
+                            demand: { type: 'number', example: 4276 },
+                            coverage: { type: 'number', example: 33.9 },
+                            balance: { type: 'number', example: -2826 },
+                            mw: {
+                              type: 'object',
+                              properties: {
+                                solar: { type: 'number', example: 0 },
+                                wind: { type: 'number', example: 76 },
+                                hydro: { type: 'number', example: 1339 },
+                                other: { type: 'number', example: 35 },
+                              },
+                            },
+                          },
+                          required: ['res', 'demand'],
+                        },
+                        map: {
+                          type: 'object',
+                          properties: {
+                            sites: { type: 'object' },
+                            cities: { type: 'object' },
+                            flows: { type: 'array' },
+                            nuclear: { type: 'object' },
+                          },
+                        },
+                        detail: { type: 'object' },
+                      },
+                    },
+                    frames: {
+                      type: 'array',
+                      description: 'Optional timeline frames for multi-step simulations',
+                      items: {
+                        type: 'object',
+                        properties: {
+                          step: { type: 'number', example: 0 },
+                          hour: { type: 'number', example: 19 },
+                          label: { type: 'string', example: '19:00 Peak' },
+                          stats: { type: 'object' },
+                          map: { type: 'object' },
+                          detail: { type: 'object' },
+                        },
+                      },
+                    },
+                  },
+                  required: ['prompt'],
+                },
+              },
+            },
+          },
+          responses: {
+            '200': {
+              description: 'Simulation successfully ingested and active in memory.',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      success: { type: 'boolean', example: true },
+                      message: { type: 'string' },
+                      id: { type: 'string' },
+                      totalSteps: { type: 'number' },
+                      isTimeline: { type: 'boolean' },
+                    },
+                  },
+                },
+              },
+            },
+            '400': { description: 'Invalid simulation payload.' },
+          },
+        },
+      },
+      '/api/simulation/state': {
+        get: {
+          summary: 'Get active simulation state',
+          description: 'Returns the currently active AI simulation snapshot and decision data, or active: false if idle.',
+          tags: ['AI Simulation & Decisions'],
+          responses: {
+            '200': {
+              description: 'Active simulation status.',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      active: { type: 'boolean', example: true },
+                      simulation: { type: 'object' },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      '/api/simulation/reset': {
+        post: {
+          summary: 'Reset simulation to empty baseline',
+          description: 'Clears the in-memory active simulation back to unseeded baseline.',
+          tags: ['AI Simulation & Decisions'],
+          parameters: [csrfHeaderParam],
+          responses: {
+            '200': {
+              description: 'Simulation reset successfully.',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      success: { type: 'boolean', example: true },
+                      message: { type: 'string' },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
     },
     components: {
       securitySchemes: {
+        bearerAuth: {
+          type: 'http',
+          scheme: 'bearer',
+          bearerFormat: 'Token',
+          description:
+            'Session access token returned upon registration or login. Paste the token here to test authenticated endpoints in Scalar.',
+        },
         cookieAuth: {
           type: 'apiKey',
           in: 'cookie',
@@ -603,6 +802,7 @@ export function createOpenApiSpec(port = 3001) {
             id: { type: 'string', example: 'usr_cl123456789' },
             email: { type: 'string', format: 'email', example: 'user@example.test' },
             name: { type: 'string', example: 'Георги Димитров' },
+            isEmailVerified: { type: 'boolean', example: false },
             preferences: {
               type: 'object',
               properties: {
@@ -611,7 +811,7 @@ export function createOpenApiSpec(port = 3001) {
               },
             },
           },
-          required: ['id', 'email', 'name', 'preferences'],
+          required: ['id', 'email', 'name', 'isEmailVerified', 'preferences'],
         },
       },
     },

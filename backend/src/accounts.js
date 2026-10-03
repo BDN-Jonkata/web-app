@@ -3,11 +3,12 @@ import {promisify} from 'node:util';
 import {normalizePreferences,THEMES,LANGUAGES} from '../../shared/preferences.js';
 import {normalizeState} from '../../shared/chatContract.js';
 import {getDatabase} from './database.js';
+import {verifyToken} from '../services/emailService.js';
 const scrypt=promisify(scryptCallback),cost={N:2**17,r:8,p:1,maxmem:256*1024*1024};
 export const SESSION_COOKIE='energy_session',SESSION_MS=7*24*60*60*1000;
 export const accountError=(status,code,message)=>Object.assign(new Error(message),{status,code});
 export const tokenHash=token=>createHash('sha256').update(token).digest('hex');
-const publicUser=user=>({id:user.id,email:user.email,name:user.name,preferences:normalizePreferences(user.preferences)});
+const publicUser=user=>({id:user.id,email:user.email,name:user.name,isEmailVerified:Boolean(user.isEmailVerified),preferences:normalizePreferences(user.preferences)});
 let activePasswordJobs=0;
 async function passwordKey(password,salt){
   // Each scrypt job is memory-intensive; do not build an unbounded work queue.
@@ -25,15 +26,24 @@ export async function verifyPassword(password,stored) {
   return timingSafeEqual(await passwordKey(password,salt),Buffer.from(hex,'hex'));
 }
 export function readSessionToken(req) {
-  const value=(req.headers?.cookie||'').split(';').map(part=>part.trim()).find(part=>part.startsWith(SESSION_COOKIE+'='))?.slice(SESSION_COOKIE.length+1);
-  return value&&/^[A-Za-z0-9_-]{43}$/.test(value)?value:null;
+  const authHeader = req?.headers?.authorization || req?.headers?.Authorization;
+  if (typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
+    const bearerValue = authHeader.slice(7).trim();
+    if (/^[A-Za-z0-9_-]{43}$/.test(bearerValue)) return bearerValue;
+  }
+  const customHeader = req?.headers?.['x-session-token'] || req?.headers?.['x-access-token'];
+  if (typeof customHeader === 'string' && /^[A-Za-z0-9_-]{43}$/.test(customHeader.trim())) {
+    return customHeader.trim();
+  }
+  const value = (req?.headers?.cookie || '').split(';').map(part => part.trim()).find(part => part.startsWith(SESSION_COOKIE + '='))?.slice(SESSION_COOKIE.length + 1);
+  return value && /^[A-Za-z0-9_-]{43}$/.test(value) ? value : null;
 }
 export function validateCredentials(input,{register=false}={}) {
   const email=typeof input?.email==='string'?input.email.trim().toLowerCase():'';
   const password=typeof input?.password==='string'?input.password:'';
   const name=typeof input?.name==='string'?input.name.trim():'';
   if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)||email.length>254)throw accountError(400,'INVALID_EMAIL','Въведи валиден имейл.');
-  if(password.length>128||password.length<(register?15:1))throw accountError(400,'INVALID_PASSWORD','Паролата трябва да е между 15 и 128 знака.');
+  if(password.length>30||password.length<(register?6:1))throw accountError(400,'INVALID_PASSWORD','Паролата трябва да е между 6 и 30 знака.');
   if(register&&(name.length<2||name.length>60))throw accountError(400,'INVALID_NAME','Името трябва да е между 2 и 60 знака.');
   return {email,password,name};
 }
@@ -58,7 +68,10 @@ export function createAccountService({database=getDatabase,now=()=>new Date()}={
   return {
     async register(input) {
       const {email,password,name}=validateCredentials(input,{register:true}),db=database(),passwordHash=await hashPassword(password);
-      try {return await issueSession(db,await db.user.create({data:{email,name,passwordHash,preferences:normalizePreferences(input.preferences)}}))}
+      try {
+        const user = await db.user.create({data:{email,name,passwordHash,preferences:normalizePreferences(input.preferences)}});
+        return issueSession(db, user);
+      }
       catch(error){if(error.code==='P2002')throw accountError(409,'REGISTRATION_FAILED','Неуспешна регистрация. Опитай с друг имейл.');throw error}
     },
     async login(input) {
@@ -80,11 +93,78 @@ export function createAccountService({database=getDatabase,now=()=>new Date()}={
       await db.session.deleteMany({where:{tokenHash:tokenHash(token)}});
       return issueSession(db,session.user);
     },
-    async forgotPassword(input) {
-      const email=typeof input?.email==='string'?input.email.trim().toLowerCase():'';
-      if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)||email.length>254)throw accountError(400,'INVALID_EMAIL','Въведи валиден имейл.');
-      await database().user.findUnique({where:{email}});
-      return {ok:true,message:'Ако профилът съществува, изпратени са инструкции за възстановяване на паролата.'};
+    async resetPassword({ token, password, sessionToken } = {}) {
+      if (typeof password !== 'string' || password.length < 6 || password.length > 30) {
+        throw accountError(400, 'INVALID_PASSWORD', 'Паролата трябва да е между 6 и 30 знака.');
+      }
+
+      const rawToken =
+        typeof token === 'string' && token.trim()
+          ? token.trim()
+          : typeof sessionToken === 'string'
+            ? sessionToken.trim()
+            : '';
+
+      if (!rawToken) {
+        throw accountError(400, 'INVALID_TOKEN', 'Липсва токен за смяна на парола.');
+      }
+
+      const db = database();
+      let user = null;
+      let isSessionAuth = false;
+      let activeSessionId = null;
+
+      // 1. Check if rawToken is a valid session access token
+      const session = await db.session.findUnique({
+        where: { tokenHash: tokenHash(rawToken) },
+        include: { user: true },
+      });
+
+      if (session && session.user && session.user.isActive !== false && session.expiresAt > now()) {
+        user = session.user;
+        isSessionAuth = true;
+        activeSessionId = session.id;
+      } else if (rawToken.includes('.')) {
+        // 2. Check if rawToken is a signed HMAC reset token from email
+        try {
+          const { userId, email } = verifyToken(rawToken, { type: 'reset_password' });
+          const dbUser = await db.user.findUnique({ where: { id: userId } });
+          if (dbUser && dbUser.email === email && dbUser.isActive !== false) {
+            user = dbUser;
+          }
+        } catch (tokenErr) {
+          throw accountError(
+            400,
+            tokenErr.code || 'INVALID_TOKEN',
+            tokenErr.message || 'Невалиден или изтекъл токен за смяна на парола.'
+          );
+        }
+      }
+
+      if (!user) {
+        throw accountError(400, 'INVALID_TOKEN', 'Невалиден или изтекъл токен за смяна на парола.');
+      }
+
+      const passwordHash = await hashPassword(password);
+      await db.user.update({
+        where: { id: user.id },
+        data: { passwordHash },
+      });
+
+      if (isSessionAuth && activeSessionId) {
+        // Keep the current session active so the user is not abruptly logged out on their own client
+        await db.session.deleteMany({
+          where: {
+            userId: user.id,
+            NOT: { id: activeSessionId },
+          },
+        });
+      } else {
+        // Complete account reset via email: revoke all sessions
+        await db.session.deleteMany({ where: { userId: user.id } });
+      }
+
+      return { ok: true, message: 'Паролата е успешно променена.' };
     },
     async preferences(userId,input) {
       if(!THEMES.includes(input?.theme)||!LANGUAGES.includes(input?.language))throw accountError(400,'INVALID_PREFERENCES','Невалидни настройки.');

@@ -6,7 +6,8 @@ export function csrfGuard(req,res,next) {
   if(req.get('Sec-Fetch-Site')==='cross-site')return res.status(403).json({code:'CSRF_REJECTED',error:'Заявката не е разрешена.'});
   const referer=req.get('Referer')||'';
   const isReference=referer.includes('/reference')||referer.includes('/scalar')||referer.includes('/docs');
-  if(req.get('X-Requested-With')==='energy-web-app'||(isReference&&req.get('Sec-Fetch-Site')==='same-origin'))return next();
+  const authHeader=req.get('Authorization')||'';
+  if(req.get('X-Requested-With')==='energy-web-app'||(isReference&&req.get('Sec-Fetch-Site')==='same-origin')||authHeader.startsWith('Bearer ')||(typeof req.path==='string'&&req.path.startsWith('/simulation')))return next();
   return res.status(403).json({code:'CSRF_REJECTED',error:'Заявката не е разрешена.'});
 }
 export function createAccountRouter({service=createAccountService(),secure=process.env.NODE_ENV==='production'}={}) {
@@ -29,7 +30,7 @@ export function createAccountRouter({service=createAccountService(),secure=proce
   for(const action of ['register','login'])router.post('/auth/'+action,createChatLimiter({limit:5}),handle(async(req,res)=>{
     const result=await service[action](req.body);
     await service.logout(readSessionToken(req));
-    res.cookie(SESSION_COOKIE,result.token,cookieOptions).status(action==='register'?201:200).json({user:result.user});
+    res.cookie(SESSION_COOKIE,result.token,cookieOptions).status(action==='register'?201:200).json({user:result.user,token:result.token});
   }));
   router.post('/auth/logout',handle(async(req,res)=>{
     await service.logout(readSessionToken(req));
@@ -40,8 +41,11 @@ export function createAccountRouter({service=createAccountService(),secure=proce
     const result=await service.refreshToken(token);
     res.cookie(SESSION_COOKIE,result.token,cookieOptions).json({user:result.user,token:result.token});
   }));
-  router.post('/auth/forgot-password',createChatLimiter({limit:5}),handle(async(req,res)=>{
-    res.json(await service.forgotPassword(req.body));
+  router.post('/auth/reset-password',createChatLimiter({limit:5}),handle(async(req,res)=>{
+    const sessionToken=readSessionToken(req);
+    const token=req.body?.token||sessionToken;
+    const password=req.body?.password;
+    res.json(await service.resetPassword({token,password,sessionToken}));
   }));
   router.put('/auth/preferences',handle(async(req,res)=>{
     const user=await requireUser(req);res.json({user:await service.preferences(user.id,req.body)});

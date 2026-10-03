@@ -11,13 +11,21 @@ function repository(){
   const db={
     user:{
       async create({data}){if([...users.values()].some(user=>user.email===data.email))throw {code:'P2002'};const user={role:'USER',isActive:true,isEmailVerified:false,...data,id:'user-'+users.size};users.set(user.id,user);return user},
-      async findUnique({where}){return [...users.values()].find(user=>user.email===where.email)||null},
+      async findUnique({where}){return [...users.values()].find(user=>(where.id?user.id===where.id:false)||(where.email?user.email===where.email:false))||null},
+      async findFirst({where}){return [...users.values()].find(user=>(where.id?user.id===where.id:false)||(where.email?user.email===where.email:false))||null},
       async update({where,data}){const user={...users.get(where.id),...data};users.set(user.id,user);return user}
     },
     session:{
       async create({data}){sessions.set(data.tokenHash,data);return data},
       async findUnique({where}){const session=sessions.get(where.tokenHash);return session?{...session,user:users.get(session.userId)}:null},
-      async deleteMany({where}){sessions.delete(where.tokenHash)}
+      async deleteMany({where}){
+        if(where.tokenHash)sessions.delete(where.tokenHash);
+        if(where.userId){
+          for(const [key,session] of sessions.entries()){
+            if(session.userId===where.userId&&(!where.NOT||session.id!==where.NOT.id))sessions.delete(key);
+          }
+        }
+      }
     },
     conversation:{
       async findUnique({where}){return conversations.get(where.id)||null},
@@ -42,6 +50,12 @@ test('registration validates email, name and password before using the database'
   for(const input of [{email:'invalid',password:'valid passphrase here',name:'Test'},{email:'a@b.test',password:'short',name:'Test'},{email:'a@b.test',password:'valid passphrase here',name:'A'}]){
     assert.throws(()=>validateCredentials(input,{register:true}));
   }
+  // 6-30 boundary validation
+  assert.throws(()=>validateCredentials({email:'a@b.test',password:'12345',name:'Test'},{register:true}), (err) => err.code === 'INVALID_PASSWORD');
+  assert.doesNotThrow(()=>validateCredentials({email:'a@b.test',password:'123456',name:'Test'},{register:true}));
+  assert.doesNotThrow(()=>validateCredentials({email:'a@b.test',password:'a'.repeat(30),name:'Test'},{register:true}));
+  assert.throws(()=>validateCredentials({email:'a@b.test',password:'a'.repeat(31),name:'Test'},{register:true}), (err) => err.code === 'INVALID_PASSWORD');
+
   assert.equal(validateCredentials({email:' A@B.TEST ',password:'valid passphrase here',name:'Test'},{register:true}).email,'a@b.test');
 });
 test('password hashing limits concurrent work and releases capacity afterward',async()=>{
@@ -66,10 +80,13 @@ test('register, login, session expiry and logout use hashed opaque tokens',async
   time=new Date(time.getTime()+SESSION_MS+1);assert.equal(await service.current(registration.token),null);
   assert.equal(await service.current(null),null);
 });
-test('session cookie parsing accepts only correctly shaped opaque tokens',()=>{
+test('session cookie and bearer token parsing accepts only correctly shaped opaque tokens',()=>{
   const token=randomBytes(32).toString('base64url');
   assert.equal(readSessionToken({headers:{cookie:'other=x; energy_session='+token}}),token);
+  assert.equal(readSessionToken({headers:{authorization:'Bearer '+token}}),token);
+  assert.equal(readSessionToken({headers:{'x-session-token':token}}),token);
   assert.equal(readSessionToken({headers:{cookie:'energy_session=bad-token'}}),null);
+  assert.equal(readSessionToken({headers:{authorization:'Bearer bad-token'}}),null);
   assert.equal(readSessionToken({headers:{}}),null);
 });
 test('registration ignores client-supplied roles, account flags and raw password fields',async()=>{
@@ -79,7 +96,7 @@ test('registration ignores client-supplied roles, account flags and raw password
   const stored=repo.users.get(registration.user.id);
   assert.equal(stored.role,'USER');assert.equal(stored.isActive,true);assert.equal(stored.isEmailVerified,false);
   assert.match(stored.passwordHash,/^scrypt\$/);assert.equal('password' in stored,false);assert.equal('userId' in stored,false);
-  assert.deepEqual(Object.keys(registration.user).sort(),['email','id','name','preferences']);
+  assert.deepEqual(Object.keys(registration.user).sort(),['email','id','isEmailVerified','name','preferences']);
 });
 test('inactive accounts cannot log in or reuse an existing session',async()=>{
   const repo=repository(),service=createAccountService({database:()=>repo.db});
@@ -127,7 +144,7 @@ test('message ownership comes from the authenticated account, not the submitted 
   assert.deepEqual(repo.conversations.get(id).messages.map(message=>message.userId),['owner',null]);
   assert.deepEqual((await service.load('owner',id)).messages,[{role:'user',content:'Hello'},{role:'assistant',content:'Hi'}]);
 });
-test('login route sets an HttpOnly cookie, never a browser-readable session token',async()=>{
+test('login route sets an HttpOnly cookie and returns access token for Scalar/API testing',async()=>{
   const token=randomBytes(32).toString('base64url'),service={login:async()=>({token,user:{id:'owner',name:'Test'}}),logout:async()=>{}};
   const router=createAccountRouter({service,secure:true});
   const layer=router.stack.find(item=>item.route?.path==='/auth/login');
@@ -136,7 +153,8 @@ test('login route sets an HttpOnly cookie, never a browser-readable session toke
   await handler(req,res);
   assert.equal(res.cookieInfo.options.httpOnly,true);assert.equal(res.cookieInfo.options.secure,true);
   assert.equal(res.cookieInfo.options.sameSite,'strict');
-  assert.ok(!JSON.stringify(res.body).includes(token));
+  assert.equal(res.body.token,token);
+  assert.equal(res.body.user.id,'owner');
 });
 test('history routes require a session and database failures return a clear error',async()=>{
   const service={current:async()=>null};
@@ -156,3 +174,53 @@ test('selected language is validated and reaches the model instructions',()=>{
   assert.match(systemPromptForLanguage('en'),/Reply in English/);
   assert.ok(!systemPromptForLanguage('en').includes('Отговаряй на български'));
 });
+
+test('reset-password updates password using active session access token and enforces 6-30 char limit', async () => {
+  const repo = repository();
+  const service = createAccountService({ database: () => repo.db });
+
+  const reg = await service.register({
+    email: 'sessionuser@example.test',
+    name: 'Петър',
+    password: 'initialPass123',
+  });
+
+  const accessToken = reg.token;
+  assert.equal(accessToken.length, 43);
+
+  // 1. Password length boundaries: < 6 rejected, > 30 rejected
+  await assert.rejects(
+    service.resetPassword({ token: accessToken, password: '12345' }),
+    (err) => err.code === 'INVALID_PASSWORD'
+  );
+  await assert.rejects(
+    service.resetPassword({ token: accessToken, password: 'a'.repeat(31) }),
+    (err) => err.code === 'INVALID_PASSWORD'
+  );
+
+  // 2. Invalid or missing token is rejected
+  await assert.rejects(
+    service.resetPassword({ token: 'invalid_access_token_123', password: 'validPassword1' }),
+    (err) => err.code === 'INVALID_TOKEN'
+  );
+  await assert.rejects(
+    service.resetPassword({ token: '', password: 'validPassword1' }),
+    (err) => err.code === 'INVALID_TOKEN'
+  );
+
+  // 3. Valid password between 6 and 30 characters succeeds
+  const res = await service.resetPassword({ token: accessToken, password: 'updatedPass456' });
+  assert.equal(res.ok, true);
+  assert.equal(res.message, 'Паролата е успешно променена.');
+
+  // 4. Verify new password can log in
+  const loginRes = await service.login({ email: 'sessionuser@example.test', password: 'updatedPass456' });
+  assert.ok(loginRes.token);
+
+  // 5. Old password fails
+  await assert.rejects(
+    service.login({ email: 'sessionuser@example.test', password: 'initialPass123' }),
+    (err) => err.code === 'INVALID_CREDENTIALS'
+  );
+});
+

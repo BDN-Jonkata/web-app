@@ -5,9 +5,12 @@ import { createOpenApiSpec } from './openapi/openapi.js';
 import { createAIProvider } from './ai/provider.js';
 import { createChatHandler, createChatLimiter } from './chat.js';
 import { createAccountRouter, csrfGuard } from './accountRoutes.js';
+import { createSimulationRouter } from './simulationRoutes.js';
+import authRouter from '../services/auth.js';
 
 export function createApp({
   provider = createAIProvider(),
+  simulationRouter = createSimulationRouter(),
   clientOrigin = process.env.CLIENT_ORIGIN || 'http://localhost:5173',
   port = Number(process.env.PORT) || 3001,
   openApiSpec,
@@ -59,7 +62,9 @@ export function createApp({
   });
 
   app.use('/api', csrfGuard);
+  app.use('/api/auth', authRouter);
   app.use('/api', createAccountRouter());
+  app.use('/api/simulation', simulationRouter);
   app.get('/api/health', (_req, res) => {
     res.json({
       status: 'ok',
