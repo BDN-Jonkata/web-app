@@ -64,13 +64,13 @@ export function createAccountService({database=getDatabase,now=()=>new Date()}={
     async login(input) {
       const {email,password}=validateCredentials(input),db=database(),user=await db.user.findUnique({where:{email}});
       const valid=user?await verifyPassword(password,user.passwordHash):(await hashPassword(password),false);
-      if(!valid)throw accountError(401,'INVALID_CREDENTIALS','Невалиден имейл или парола.');
+      if(!valid||user.isActive===false)throw accountError(401,'INVALID_CREDENTIALS','Невалиден имейл или парола.');
       return issueSession(db,user);
     },
     async current(token) {
       if(!token)return null;
       const session=await database().session.findUnique({where:{tokenHash:tokenHash(token)},include:{user:true}});
-      return session&&session.expiresAt>now()?publicUser(session.user):null;
+      return session&&session.user&&session.user.isActive!==false&&session.expiresAt>now()?publicUser(session.user):null;
     },
     async logout(token) {if(token)await database().session.deleteMany({where:{tokenHash:tokenHash(token)}})},
     async preferences(userId,input) {
@@ -94,7 +94,7 @@ export function createAccountService({database=getDatabase,now=()=>new Date()}={
         const existing=await db.conversation.findUnique({where:{id},select:{userId:true}});
         if(existing&&existing.userId!==userId)throw accountError(404,'HISTORY_NOT_FOUND','Разговорът не е намерен.');
         // Stable ordering also when several messages share the same DB timestamp.
-        const messages=data.messages.map((message,index)=>({...message,createdAt:new Date(now().getTime()+index)}));
+        const messages=data.messages.map((message,index)=>({...message,userId:message.role==='USER'?userId:null,createdAt:new Date(now().getTime()+index)}));
         const record=existing?
           await db.conversation.update({where:{id},data:{title:data.title,state:data.state,messages:{deleteMany:{},create:messages}}}):
           await db.conversation.create({data:{id,userId,title:data.title,state:data.state,messages:{create:messages}}});

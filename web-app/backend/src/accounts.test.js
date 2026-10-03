@@ -10,7 +10,7 @@ function repository(){
   const users=new Map(),sessions=new Map(),conversations=new Map();
   const db={
     user:{
-      async create({data}){if([...users.values()].some(user=>user.email===data.email))throw {code:'P2002'};const user={...data,id:'user-'+users.size};users.set(user.id,user);return user},
+      async create({data}){if([...users.values()].some(user=>user.email===data.email))throw {code:'P2002'};const user={role:'USER',isActive:true,isEmailVerified:false,...data,id:'user-'+users.size};users.set(user.id,user);return user},
       async findUnique({where}){return [...users.values()].find(user=>user.email===where.email)||null},
       async update({where,data}){const user={...users.get(where.id),...data};users.set(user.id,user);return user}
     },
@@ -72,6 +72,26 @@ test('session cookie parsing accepts only correctly shaped opaque tokens',()=>{
   assert.equal(readSessionToken({headers:{cookie:'energy_session=bad-token'}}),null);
   assert.equal(readSessionToken({headers:{}}),null);
 });
+test('registration ignores client-supplied roles, account flags and raw password fields',async()=>{
+  const repo=repository(),service=createAccountService({database:()=>repo.db});
+  const registration=await service.register({email:'roles@example.test',name:'Test',password:'correct testing passphrase',
+    role:'ADMIN',isActive:false,isEmailVerified:true,passwordHash:'injected hash',userId:'someone-else'});
+  const stored=repo.users.get(registration.user.id);
+  assert.equal(stored.role,'USER');assert.equal(stored.isActive,true);assert.equal(stored.isEmailVerified,false);
+  assert.match(stored.passwordHash,/^scrypt\$/);assert.equal('password' in stored,false);assert.equal('userId' in stored,false);
+  assert.deepEqual(Object.keys(registration.user).sort(),['email','id','name','preferences']);
+});
+test('inactive accounts cannot log in or reuse an existing session',async()=>{
+  const repo=repository(),service=createAccountService({database:()=>repo.db});
+  const credentials={email:'inactive@example.test',name:'Test',password:'correct testing passphrase'};
+  const registration=await service.register(credentials);
+  assert.ok(await service.current(registration.token));
+  repo.users.get(registration.user.id).isActive=false;
+  await assert.rejects(service.login(credentials),error=>error.status===401&&error.code==='INVALID_CREDENTIALS');
+  assert.equal(await service.current(registration.token),null);assert.equal(repo.sessions.size,1);
+  repo.users.delete(registration.user.id);
+  assert.equal(await service.current(registration.token),null);
+});
 test('CSRF guard rejects unsafe cross-site requests and permits the app header',()=>{
   const request=(headers={},method='POST')=>({method,get:name=>headers[name]});
   const response=()=>({status(value){this.statusCode=value;return this},json(value){this.body=value;return this}});
@@ -97,6 +117,15 @@ test('history does not accept system instructions, invalid states or oversized m
     {messages:[{role:'user',content:'OK'}],state:{hour:900}}]){
     assert.throws(()=>validateConversation(input),error=>error.status===400&&error.code==='INVALID_HISTORY');
   }
+});
+test('message ownership comes from the authenticated account, not the submitted history',async()=>{
+  const repo=repository(),service=createAccountService({database:()=>repo.db}),id='conversation-ownership-test';
+  const input={messages:[{role:'user',content:'Hello',userId:'victim'},{role:'assistant',content:'Hi',userId:'victim'}],state:INITIAL_STATE};
+  await service.save('owner',id,input);
+  assert.deepEqual(repo.conversations.get(id).messages.map(message=>message.userId),['owner',null]);
+  await service.save('owner',id,input);
+  assert.deepEqual(repo.conversations.get(id).messages.map(message=>message.userId),['owner',null]);
+  assert.deepEqual((await service.load('owner',id)).messages,[{role:'user',content:'Hello'},{role:'assistant',content:'Hi'}]);
 });
 test('login route sets an HttpOnly cookie, never a browser-readable session token',async()=>{
   const token=randomBytes(32).toString('base64url'),service={login:async()=>({token,user:{id:'owner',name:'Test'}}),logout:async()=>{}};
