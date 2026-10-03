@@ -1,5 +1,5 @@
 import {useCallback,useEffect,useMemo,useRef,useState} from 'react';
-import {ArrowUp,ArrowUpRight,ChevronLeft,ChevronRight,Cloud,Info,Layers3,MessageSquare,PanelRightOpen,Pause,Play,RotateCcw,Wind,X,Zap} from 'lucide-react';
+import {ArrowUp,ArrowUpRight,ChevronLeft,ChevronRight,Cloud,Info,Layers3,MessageSquare,Mic,PanelRightOpen,Pause,Play,RotateCcw,Square,Wind,X,Zap} from 'lucide-react';
 import {CAPACITY,CITIES,COLORS,GEO,NUCLEAR,SEASONS,SITES,TYPES,clock,pos,unproject,simulate} from './energy';
 import {placeMapLabels} from './mapLabels';
 import {requestChat} from './chatApi.js';
@@ -9,6 +9,8 @@ import {useAppSettings} from './AppSettings.jsx';
 import ChatDrawer from './ChatDrawer.jsx';
 import {useChatHistory} from './useChatHistory.js';
 import {formatNumber} from './i18n.js';
+import {useDictation} from './useDictation.js';
+import {SPEECH_ERRORS} from './speechRecognition.js';
 
 const INITIAL=INITIAL_STATE;
 
@@ -192,6 +194,9 @@ function Chat({state,setState,collapsed,setCollapsed}) {
   const [conversationId,setConversationId]=useState(()=>crypto.randomUUID());
   const [pending,setPending]=useState(false),[restoring,setRestoring]=useState(false),[aiStatus,setAIStatus]=useState({configured:null});
   const [sidebarOpen,setSidebarOpen]=useState(false),sidebarTrigger=useRef(null);
+  const draftRef=useRef(null);
+  const dictation=useDictation({language,setDraft,maxLength:MAX_MESSAGE_LENGTH,
+    disabled:pending||restoring||!sessionReady||sidebarOpen||collapsed});
   const closeSidebar=useCallback(()=>setSidebarOpen(false),[]);
   const listRef=useRef(null),requestRef=useRef(null),pendingRef=useRef(false),restoringRef=useRef(false),mountedRef=useRef(false);
   useEffect(()=>{
@@ -215,6 +220,7 @@ function Chat({state,setState,collapsed,setCollapsed}) {
   }
   async function restore(id){
     if(pendingRef.current||restoringRef.current)return;
+    dictation.cancel();
     restoringRef.current=true;setRestoring(true);
     try{
       const record=await historyStore.load(id);
@@ -228,11 +234,12 @@ function Chat({state,setState,collapsed,setCollapsed}) {
   }
   function newConversation(){
     if(pendingRef.current||restoringRef.current)return;
+    dictation.cancel();
     setMsgs([{role:'bot',initial:true,text:''}]);setConversationId(crypto.randomUUID());setDraft('');
   }
   async function send(text){
     const clean=text.trim();
-    if(!clean||pendingRef.current||restoringRef.current||!sessionReady||clean.length>MAX_MESSAGE_LENGTH)return;
+    if(!clean||dictation.isActive()||pendingRef.current||restoringRef.current||!sessionReady||clean.length>MAX_MESSAGE_LENGTH)return;
     pendingRef.current=true;setPending(true);
     const controller=new AbortController();requestRef.current=controller;
     const history=msgs.filter(message=>!message.initial&&!message.error)
@@ -259,6 +266,13 @@ function Chat({state,setState,collapsed,setCollapsed}) {
   const statusText=!sessionReady?'Проверка на профила…':restoring?'Зареждане…':pending?'AI подготвя отговор…':aiStatus.error?'Няма връзка с backend-а':
     aiStatus.configured===false?'AI не е настроен · нужен е API ключ':
     aiStatus.configured===true?(aiStatus.provider==='groq'?'Groq · тестов AI':'AI · свързан'):'Проверка на AI връзката…';
+  const speechError=dictation.error||(dictation.availability!=='available'?dictation.availability:null);
+  const speechStatus=speechError?SPEECH_ERRORS[speechError]:({
+    starting:'Разреши микрофона, ако браузърът поиска достъп…',
+    listening:'Слушам… Спри диктовката, прегледай текста и го изпрати.',
+    stopping:'Завършвам диктовката…'
+  })[dictation.status];
+  const micLabel=dictation.active?'Спри диктовката':language==='en'?'Диктувай на английски':'Диктувай на български';
   if(collapsed)return <button className="chat-open" aria-label={t('Отвори енергийния асистент')} onClick={()=>setCollapsed(false)}>
     <MessageSquare size={20}/><span>{t('Енергиен асистент')}</span><ChevronLeft size={18}/>
   </button>;
@@ -267,8 +281,8 @@ function Chat({state,setState,collapsed,setCollapsed}) {
       <div className="chat-logo"><Zap size={19} fill="currentColor"/></div>
       <div><strong>{t('Енергиен асистент')}</strong><span className={aiStatus.error||aiStatus.configured===false?'ai-offline':''}><i/> {t(statusText)}</span></div>
       <button className="header-icon drawer-trigger" ref={sidebarTrigger} title={t('Отвори менюто')} aria-label={t('Отвори менюто')}
-        aria-expanded={sidebarOpen} aria-controls="chat-drawer" onClick={()=>setSidebarOpen(true)}><PanelRightOpen size={18}/></button>
-      <button aria-label={t('Свий чата')} onClick={()=>setCollapsed(true)}><ChevronRight size={18}/></button>
+        aria-expanded={sidebarOpen} aria-controls="chat-drawer" onClick={()=>{dictation.cancel();setSidebarOpen(true)}}><PanelRightOpen size={18}/></button>
+      <button aria-label={t('Свий чата')} onClick={()=>{dictation.cancel();setCollapsed(true)}}><ChevronRight size={18}/></button>
     </header>
     {historyStore.notice&&<div className="history-notice" role="status" inert={sidebarOpen}>{errorText(historyStore.notice)}</div>}
     <div className="messages" ref={listRef} aria-live="polite" aria-relevant="additions" inert={sidebarOpen}>
@@ -281,15 +295,27 @@ function Chat({state,setState,collapsed,setCollapsed}) {
         <div className="message-body"><small>{t('Енергиен асистент')}</small><p className="typing" role="status" aria-label={t('AI подготвя отговор…')}><i/><i/><i/></p></div></div>}
     </div>
     <div className="chips" aria-label={t('Примерни въпроси')} inert={sidebarOpen}>
-      {['Колко дава слънцето?','Къде се харчи най-много?','Покажи зима вечер'].map(text=><button type="button" disabled={pending||restoring||!sessionReady}
+      {['Колко дава слънцето?','Къде се харчи най-много?','Покажи зима вечер'].map(text=><button type="button" disabled={pending||restoring||!sessionReady||dictation.active}
         onClick={()=>send(t(text))} key={text}>{t(text)}<ArrowUpRight size={12}/></button>)}
     </div>
-    <form inert={sidebarOpen} onSubmit={event=>{event.preventDefault();send(draft)}}>
-      <textarea aria-label={t('Въпрос към енергийния асистент')} maxLength={MAX_MESSAGE_LENGTH} value={draft} onChange={event=>setDraft(event.target.value)}
-        onKeyDown={event=>{if(event.key==='Enter'&&!event.shiftKey&&!event.nativeEvent.isComposing){event.preventDefault();send(draft)}}}
+    <form inert={sidebarOpen} className={dictation.active?'dictating':''} onSubmit={event=>{event.preventDefault();send(draft)}}>
+      <textarea ref={draftRef} aria-label={t('Въпрос към енергийния асистент')} maxLength={MAX_MESSAGE_LENGTH} value={draft}
+        readOnly={dictation.active} onChange={event=>setDraft(event.target.value)}
+        onKeyDown={event=>{
+          if(event.key==='Escape'&&dictation.isActive()){event.preventDefault();dictation.stop()}
+          if(event.key==='Enter'&&!event.shiftKey&&!event.nativeEvent.isComposing){event.preventDefault();if(dictation.isActive())dictation.stop();else send(draft)}
+        }}
         placeholder={t('Попитай за енергията…')} rows="2"/>
-      <button type="submit" aria-label={t('Изпрати съобщението')} disabled={pending||restoring||!sessionReady||!draft.trim()}><ArrowUp size={19}/></button>
+      <button type="button" className="mic-button" data-active={dictation.active} aria-label={t(micLabel)} aria-pressed={dictation.active}
+        aria-describedby="dictation-help" title={t(speechError?SPEECH_ERRORS[speechError]:micLabel)+' · '+t('Гласът може да се обработва от външната услуга на браузъра.')}
+        disabled={dictation.availability!=='available'||pending||restoring||!sessionReady||dictation.status==='stopping'}
+        onClick={()=>{if(dictation.isActive())dictation.stop();else if(dictation.start(draft))draftRef.current?.focus({preventScroll:true})}}>
+        {dictation.active?<Square size={14} fill="currentColor"/>:<Mic size={18}/>}
+      </button>
+      <button type="submit" aria-label={t('Изпрати съобщението')} disabled={pending||restoring||!sessionReady||dictation.active||!draft.trim()}><ArrowUp size={19}/></button>
     </form>
+    <span id="dictation-help" className="sr-only">{t('Гласът може да се обработва от външната услуга на браузъра.')} {t('Диктовката не изпраща съобщението автоматично.')}</span>
+    <div className={'dictation-status'+(speechError?' warning':'')} role="status" aria-live="polite" inert={sidebarOpen}>{speechStatus?t(speechStatus):''}</div>
     <small className="chat-note" inert={sidebarOpen}><Info size={11}/>{t('Тестов AI · симулация, не данни на живо.')}</small>
     <ChatDrawer open={sidebarOpen} onClose={closeSidebar} triggerRef={sidebarTrigger} history={historyStore} currentId={conversationId}
       onSelect={restore} onNew={newConversation} disabled={pending||restoring||!sessionReady}/>

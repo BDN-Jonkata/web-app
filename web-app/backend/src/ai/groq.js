@@ -10,7 +10,7 @@ export function createGroqProvider({apiKey='',model=DEFAULT_MODEL,fetchImpl=glob
   return {
     status:()=>({provider:'groq',model,configured:Boolean(key)}),
     async generate({message,history,state,language='bg'},{signal}={}) {
-      if(!key)throw new AIError(503,'AI_NOT_CONFIGURED','AI още не е настроен. Добави GROQ_API_KEY в web-app/.env и рестартирай backend-а.');
+      if(!key)throw new AIError(503,'AI_NOT_CONFIGURED','AI още не е настроен. Добави GROQ_API_KEY в web-app/backend/.env и рестартирай backend-а.');
       const requestSignal=signal?AbortSignal.any([signal,AbortSignal.timeout(timeoutMs)]):AbortSignal.timeout(timeoutMs);
       try {
         const response=await fetchImpl(ENDPOINT,{
@@ -31,7 +31,7 @@ export function createGroqProvider({apiKey='',model=DEFAULT_MODEL,fetchImpl=glob
           throw new AIError(429,'AI_RATE_LIMIT','Достигнат е лимитът на безплатния AI. Опитай след '+retryAfter+' секунди.',retryAfter);
         }
         if(response.status===401||response.status===403){
-          throw new AIError(502,'AI_AUTH_ERROR','Groq отхвърли API ключа или достъпа до модела. Провери GROQ_API_KEY и GROQ_MODEL в web-app/.env.');
+          throw new AIError(502,'AI_AUTH_ERROR','Groq отхвърли API ключа или достъпа до модела. Провери GROQ_API_KEY и GROQ_MODEL в web-app/backend/.env.');
         }
         if(!response.ok)throw new AIError(502,'AI_PROVIDER_ERROR','AI доставчикът не успя да отговори. Опитай отново или провери модела в настройките на backend-а.');
         const data=await response.json();

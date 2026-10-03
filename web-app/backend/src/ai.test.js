@@ -7,7 +7,7 @@ import {buildEnergyContext,SYSTEM_PROMPT} from './ai/context.js';
 import {createGroqProvider,DEFAULT_MODEL} from './ai/groq.js';
 import {createAIProvider} from './ai/provider.js';
 import {createChatHandler,createChatLimiter} from './chat.js';
-import {requestChat} from '../../client/src/chatApi.js';
+import {requestChat} from '../../frontend/src/chatApi.js';
 
 const request=()=>normalizeChatRequest({message:'Колко дава слънцето?',state:INITIAL_STATE});
 const upstream=(content,status=200,headers={})=>({
