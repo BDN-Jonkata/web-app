@@ -7,7 +7,7 @@
     "dev": "node --watch src/index.js",
     "start": "node src/index.js",
     "dev:demo": "node --watch server/server.js",
-    "dev:open": "node --watch server/server.js --open",
+    "dev:open": "node --watch src/index.js --open",
     "test": "node src/ai.test.js && node src/accounts.test.js && node src/environment.test.js && node src/userProfiles.test.js && node server/server.test.js",
     "db:generate": "node scripts/prisma.mjs generate",
     "db:push": "node scripts/prisma.mjs db push",

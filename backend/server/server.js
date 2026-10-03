@@ -1,60 +1,20 @@
-import express from 'express';
-import cors from 'cors';
 import { exec } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { apiReference } from '@scalar/express-api-reference';
-import { createOpenApiSpec } from './openapi.js';
+import { createApp } from '../src/app.js';
+import { createOpenApiSpec } from '../src/openapi/openapi.js';
 
-const app = express();
-const port = Number(process.env.PORT) || 3000;
+const port = Number(process.env.PORT) || 3001;
 const openApiSpec = createOpenApiSpec(port);
-
-app.use(cors());
-app.use(express.json());
-
-// Expose OpenAPI 3.1.0 specification JSON
-app.get('/openapi.json', (req, res) => {
-  res.json(openApiSpec);
-});
-
-// Root health check endpoint
-app.get('/', (req, res) => {
-  res.send(`Server is healthy and running on port ${port}`);
-});
-
-// JSON health check endpoint for API consumers & testing
-app.get('/api/health', (req, res) => {
-  res.json({
-    status: 'ok',
-    port,
-    timestamp: new Date().toISOString(),
-  });
-});
-
-// Scalar API Reference middleware for interactive endpoint testing & documentation
-app.use(
-  '/reference',
-  apiReference({
-    theme: 'purple',
-    pageTitle: 'API Reference & Testing',
-    spec: {
-      content: openApiSpec,
-    },
-  })
-);
-
-// Redirect common documentation paths to the Scalar API reference interface
-app.get(['/docs', '/scalar'], (req, res) => {
-  res.redirect('/reference');
-});
+const app = createApp({ port, openApiSpec });
 
 function openInBrowser(url) {
-  const cmd = process.platform === 'win32'
-    ? `start ${url}`
-    : process.platform === 'darwin'
-      ? `open ${url}`
-      : `xdg-open ${url}`;
+  const cmd =
+    process.platform === 'win32'
+      ? `start ${url}`
+      : process.platform === 'darwin'
+        ? `open ${url}`
+        : `xdg-open ${url}`;
   exec(cmd, () => {});
 }
 
@@ -80,7 +40,9 @@ export function startServer(listenPort = port) {
   return server;
 }
 
-const isMain = process.argv[1] && path.resolve(process.argv[1]).toLowerCase() === fileURLToPath(import.meta.url).toLowerCase();
+const isMain =
+  process.argv[1] &&
+  path.resolve(process.argv[1]).toLowerCase() === fileURLToPath(import.meta.url).toLowerCase();
 if (isMain) {
   startServer();
 }
