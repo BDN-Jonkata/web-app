@@ -40,12 +40,11 @@ test('server endpoints and scalar integration', async (t) => {
     assert.ok(spec.paths['/api/health']);
     assert.ok(spec.paths['/api/chat']);
 
-    // Check all services/auth.js endpoints are present in Scalar OpenAPI
     assert.ok(spec.paths['/api/auth/register']);
     assert.ok(spec.paths['/api/auth/login']);
     assert.ok(spec.paths['/api/auth/logout']);
     assert.ok(spec.paths['/api/auth/refresh-token']);
-    assert.ok(spec.paths['/api/auth/forgot-password']);
+    assert.ok(spec.paths['/api/auth/reset-password']);
 
     // Check additional session and history endpoints
     assert.ok(spec.paths['/api/auth/session']);
@@ -73,25 +72,6 @@ test('server endpoints and scalar integration', async (t) => {
     assert.equal(resScalar.headers.get('location'), '/reference');
   });
 
-  await t.test('POST /api/auth/forgot-password responds to Scalar test requests', async () => {
-    const res = await fetch(`${baseUrl}/api/auth/forgot-password`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Requested-With': 'energy-web-app',
-      },
-      body: JSON.stringify({ email: 'test@example.test' }),
-    });
-    // In test environment without DB, it safely returns 200 or 503 DATABASE_UNAVAILABLE, not 404
-    assert.ok([200, 503].includes(res.status));
-    const json = await res.json();
-    if (res.status === 200) {
-      assert.equal(json.ok, true);
-    } else {
-      assert.equal(json.code, 'DATABASE_UNAVAILABLE');
-    }
-  });
-
   await t.test('POST /api/auth/refresh-token rejects empty token with 401', async () => {
     const res = await fetch(`${baseUrl}/api/auth/refresh-token`, {
       method: 'POST',
@@ -104,6 +84,44 @@ test('server endpoints and scalar integration', async (t) => {
     assert.equal(res.status, 401);
     const json = await res.json();
     assert.equal(json.code, 'INVALID_TOKEN');
+  });
+
+  await t.test('OpenAPI spec documents bearerAuth and token property in register/login responses for Scalar', () => {
+    assert.ok(openApiSpec.components?.securitySchemes?.bearerAuth);
+    assert.equal(openApiSpec.components.securitySchemes.bearerAuth.type, 'http');
+    assert.equal(openApiSpec.components.securitySchemes.bearerAuth.scheme, 'bearer');
+
+    const registerSchema =
+      openApiSpec.paths['/api/auth/register'].post.responses['201'].content['application/json'].schema;
+    assert.ok(registerSchema.properties.token, 'Register response schema should include token');
+
+    const loginSchema =
+      openApiSpec.paths['/api/auth/login'].post.responses['200'].content['application/json'].schema;
+    assert.ok(loginSchema.properties.token, 'Login response schema should include token');
+
+    const regPasswordSchema =
+      openApiSpec.paths['/api/auth/register'].post.requestBody.content['application/json'].schema.properties.password;
+    assert.equal(regPasswordSchema.minLength, 6);
+    assert.equal(regPasswordSchema.maxLength, 30);
+
+    assert.equal(openApiSpec.paths['/api/auth/send-verification-email'], undefined);
+    assert.equal(openApiSpec.paths['/api/auth/verify-email'], undefined);
+    assert.equal(openApiSpec.paths['/api/auth/forgot-password'], undefined);
+    assert.ok(openApiSpec.paths['/api/auth/reset-password']);
+  });
+
+  await t.test('POST /api/auth/reset-password rejects short password with 400', async () => {
+    const res = await fetch(`${baseUrl}/api/auth/reset-password`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Requested-With': 'energy-web-app',
+      },
+      body: JSON.stringify({ token: 'some_token', password: '123' }),
+    });
+    assert.equal(res.status, 400);
+    const json = await res.json();
+    assert.equal(json.code, 'INVALID_PASSWORD');
   });
 
   await t.test('backend/services/auth.js exports an active router module', () => {
