@@ -266,3 +266,35 @@ test('simulation payloads cannot smuggle CSS, oversized timelines or odd ids', (
   assert.equal(first.stats.sectors[1].color, '#aabbcc');
   assert.equal(first.map.flows[0].color, undefined);
 });
+
+test('compact v2 payload expands to the same frames and inherits omitted fields', () => {
+  const normalized = normalizeSimulationPayload({
+    v: 2,
+    prompt: 'Winter storm at 19:00',
+    answer: 'Belovo at full power.',
+    actions: [['hydro', 'dispatch_max', 'belovo', 736]],
+    scenario: { season: 'winter', cloud: 95, wind: 25, stepMs: 1500 },
+    frames: [
+      { hour: 19, demand: 4276, mw: { solar: 0, wind: 76, hydro: 1339, other: 35 }, sectors: { 'Индустрия': 1700 },
+        sites: { belovo: 736 }, cities: { sofia: [1450, 800] }, flows: [['belovo', 'sofia']], nuclear: 2000, notes: { belovo: 'Max' } },
+      { mw: { hydro: 1200 }, cities: { plovdiv: [620, 400] } },
+    ],
+  });
+  assert.deepEqual(normalized.decision.actions, [{ component: 'hydro', action: 'dispatch_max', target: 'belovo', value: 736 }]);
+  assert.equal(normalized.decision.answer, 'Belovo at full power.');
+  assert.deepEqual(normalized.scenario, { season: 'winter', cloud: 95, wind: 25, hour: 19, stepDurationMs: 1500 });
+  const [first, second] = normalized.frames;
+  assert.equal(first.label, '19:00');
+  assert.equal(first.stats.res, 1450);
+  assert.equal(first.stats.balance, 1450 - 4276);
+  assert.equal(first.stats.sectors[0].color, '#14201c');
+  assert.deepEqual(first.map.flows, [{ from: 'belovo', to: 'sofia', mw: 0, color: undefined }]);
+  assert.equal(first.map.nuclear.output, 2000);
+  assert.equal(first.detail.belovo.aiDecision, 'Max');
+  assert.equal(second.hour, 20);
+  assert.equal(second.label, '20:00');
+  assert.equal(second.stats.res, 76 + 1200 + 35);
+  assert.equal(second.stats.demand, 4276);
+  assert.equal(second.map.sites.belovo.output, 736);
+  assert.deepEqual(Object.keys(second.map.cities), ['sofia', 'plovdiv']);
+});
