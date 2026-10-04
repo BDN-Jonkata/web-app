@@ -1,4 +1,4 @@
-import { exec } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { createApp } from './app.js';
 import { loadBackendEnvironment } from './environment.js';
 import {createEmailAuthService} from './emailAuth.js';
@@ -10,13 +10,22 @@ const host = process.env.HOST || '127.0.0.1';
 const app = createApp({ port });
 
 function openInBrowser(url) {
-  const cmd =
+  // Arguments are passed as an array, never through a shell, so HOST/PORT values cannot inject commands.
+  const [command, args] =
     process.platform === 'win32'
-      ? `start ${url}`
+      ? ['cmd', ['/c', 'start', '""', url]]
       : process.platform === 'darwin'
-        ? `open ${url}`
-        : `xdg-open ${url}`;
-  exec(cmd, () => {});
+        ? ['open', [url]]
+        : ['xdg-open', [url]];
+  execFile(command, args, () => {});
+}
+
+const loopback = ['127.0.0.1', 'localhost', '::1'].includes(host);
+if (!loopback && process.env.NODE_ENV !== 'production' && process.env.COOKIE_SECURE !== 'true') {
+  console.warn('WARNING: listening on a non-local address without NODE_ENV=production or COOKIE_SECURE=true; session cookies will be sent without the Secure flag.');
+}
+if (process.env.NODE_ENV === 'production' && !process.env.SIMULATION_API_KEY) {
+  console.warn('WARNING: SIMULATION_API_KEY is not set; simulation updates are disabled in production.');
 }
 
 app.listen(port, host, () => {

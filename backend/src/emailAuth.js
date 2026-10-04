@@ -1,5 +1,5 @@
 import {createHmac,randomBytes,randomInt,timingSafeEqual} from 'node:crypto';
-import {createAccountService,accountError,hashPassword,verifyPassword,tokenHash,publicUser,SESSION_MS} from './accounts.js';
+import {createAccountService,accountError,hashPassword,verifyPassword,tokenHash,publicUser,SESSION_MS,isValidEmail,isAcceptablePassword,PASSWORD_MESSAGE,pruneSessions} from './accounts.js';
 import {getDatabase} from './database.js';
 import {createEmailService} from './email.js';
 
@@ -27,8 +27,13 @@ export function createEmailAuthService({database=getDatabase,now=()=>new Date(),
     mail.ensureConfigured();
     const token=randomBytes(32).toString('base64url'),code=String(randomInt(0,1000000)).padStart(6,'0'),time=now();
     const challenge=await transaction(async db=>{
-      const recent=await db.authChallenge.findMany({where:{userId:user.id,createdAt:{gte:new Date(time.getTime()-3600000)}},orderBy:{lastSentAt:'desc'}});
-      if(recent.length>=5||recent.some(item=>time-item.lastSentAt<cooldown))throw limited();
+      // Limits are per purpose, so repeated "forgot password" requests from a stranger cannot block the owner's login or signup.
+      // The overall cap still protects the inbox from email bombing.
+      const all=await db.authChallenge.findMany({where:{userId:user.id,createdAt:{gte:new Date(time.getTime()-3600000)}},orderBy:{lastSentAt:'desc'}});
+      const recent=all.filter(item=>item.purpose===purpose);
+      if(all.length>=10||recent.length>=5||recent.some(item=>time-item.lastSentAt<cooldown))throw limited();
+      // Wrong guesses add up across challenges, so asking for fresh codes does not reset an attacker's guess budget.
+      if(purpose==='RESET_PASSWORD'&&recent.reduce((sum,item)=>sum+item.attempts,0)>=10)throw limited();
       await db.authChallenge.updateMany({where:{userId:user.id,purpose,consumedAt:null},data:{consumedAt:time}});
       return db.authChallenge.create({data:{tokenHash:tokenHash(token),userId:user.id,purpose,email:user.email,
         codeHash:codeHash(token,code,purpose),credentialHash:user.passwordHash,language:lang,
@@ -44,6 +49,14 @@ export function createEmailAuthService({database=getDatabase,now=()=>new Date(),
     if(deferDelivery)void deliver().catch(()=>{/* Never log a verification code. */});
     else await deliver();
     return {verificationRequired:true,challengeToken:token,expiresAt:challenge.expiresAt,resendAt:new Date(time.getTime()+cooldown)};
+  }
+  // Looks like a real challenge but belongs to no account and sends nothing; verification always fails.
+  async function decoy(purpose,lang){
+    const token=randomBytes(32).toString('base64url'),time=now();
+    const item=await database().authChallenge.create({data:{tokenHash:tokenHash(token),purpose,
+      codeHash:codeHash(token,String(randomInt(0,1000000)).padStart(6,'0'),purpose),credentialHash:'',
+      language:lang,expiresAt:new Date(time.getTime()+CHALLENGE_MS),lastSentAt:time,createdAt:time}});
+    return {verificationRequired:true,challengeToken:token,expiresAt:item.expiresAt,resendAt:new Date(time.getTime()+cooldown)};
   }
   async function consume(token,code,purposes,complete){
     if(!validToken(token))throw invalid();
@@ -81,10 +94,12 @@ export function createEmailAuthService({database=getDatabase,now=()=>new Date(),
         if(error.code!=='REGISTRATION_FAILED')throw error;
         // A failed delivery can be retried, but never overwrite a pre-existing account.
         const existing=await database().user.findUnique({where:{email:String(input.email).trim().toLowerCase()}});
-        if(!existing||!existing.isActive||existing.isEmailVerified||!await verifyPassword(input.password,existing.passwordHash))throw error;
+        // Anyone else gets the same 202 + cookie as a new signup, so registration cannot be used to find out which emails exist.
+        if(!existing||!existing.isActive||existing.isEmailVerified||!await verifyPassword(input.password,existing.passwordHash))
+          return decoy('SIGNUP',language(input?.preferences?.language));
         user=existing;
       }
-      return start(user,'SIGNUP',language(input?.preferences?.language));
+      return start(user,'SIGNUP',language(input?.preferences?.language),{deferDelivery:true});
     },
     async login(input){
       mail.ensureConfigured();
@@ -98,6 +113,7 @@ export function createEmailAuthService({database=getDatabase,now=()=>new Date(),
         if(validToken(sessionToken))await db.session.deleteMany({where:{tokenHash:tokenHash(sessionToken)}});
         const issuedToken=randomBytes(32).toString('base64url');
         await db.session.create({data:{tokenHash:tokenHash(issuedToken),userId:user.id,expiresAt:new Date(time.getTime()+SESSION_MS)}});
+        await pruneSessions(db,user.id);
         return {user:publicUser(verified),token:issuedToken};
       });
     },
@@ -123,7 +139,7 @@ export function createEmailAuthService({database=getDatabase,now=()=>new Date(),
     async forgotPassword(input){
       mail.ensureConfigured();
       const email=typeof input?.email==='string'?input.email.trim().toLowerCase():'';
-      if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)||email.length>254)throw accountError(400,'INVALID_EMAIL','Въведи валиден имейл.');
+      if(!isValidEmail(email))throw accountError(400,'INVALID_EMAIL','Въведи валиден имейл.');
       const user=await database().user.findUnique({where:{email}});
       // Always return the same status/body/cookie shape; never disclose account existence.
       let result;
@@ -131,18 +147,11 @@ export function createEmailAuthService({database=getDatabase,now=()=>new Date(),
         try{result=await start(user,'RESET_PASSWORD',language(input?.language),{deferDelivery:true})}
         catch(error){if(!['EMAIL_RATE_LIMIT','EMAIL_UNAVAILABLE'].includes(error.code))throw error}
       }
-      if(!result){
-        // Persist a decoy too: resend behavior must not reveal whether the email exists.
-        const token=randomBytes(32).toString('base64url'),time=now();
-        const item=await database().authChallenge.create({data:{tokenHash:tokenHash(token),purpose:'RESET_PASSWORD',
-          codeHash:codeHash(token,String(randomInt(0,1000000)).padStart(6,'0'),'RESET_PASSWORD'),credentialHash:'',
-          language:language(input?.language),expiresAt:new Date(time.getTime()+CHALLENGE_MS),lastSentAt:time,createdAt:time}});
-        result={verificationRequired:true,challengeToken:token,expiresAt:item.expiresAt,resendAt:new Date(time.getTime()+cooldown)};
-      }
-      return result;
+      // Persist a decoy too: resend behavior must not reveal whether the email exists.
+      return result||decoy('RESET_PASSWORD',language(input?.language));
     },
     async resetPassword({token,code,password,confirmPassword,metadata={}}){
-      if(typeof password!=='string'||password.length<6||password.length>30)throw accountError(400,'INVALID_PASSWORD','Паролата трябва да е между 6 и 30 знака.');
+      if(!isAcceptablePassword(password))throw accountError(400,'INVALID_PASSWORD',PASSWORD_MESSAGE);
       if(password!==confirmPassword)throw accountError(400,'PASSWORD_MISMATCH','Паролите не съвпадат.');
       // Verify and update in one serializable transaction; replay/concurrent reset can't succeed twice.
       const result=await consume(token,code,['RESET_PASSWORD'],async(db,user,challenge,time)=>{
@@ -163,6 +172,9 @@ export function createEmailAuthService({database=getDatabase,now=()=>new Date(),
       // Retain only recent security records; don't keep old IP/device data indefinitely.
       await db.authChallenge.deleteMany({where:{createdAt:{lt:new Date(time.getTime()-7*86400000)}}});
       await db.emailNotification.deleteMany({where:{sentAt:{lt:new Date(time.getTime()-7*86400000)}}});
+      // Expired sessions and signups that never confirmed their email do not need to live forever.
+      await db.session.deleteMany({where:{expiresAt:{lt:time}}});
+      await db.user.deleteMany({where:{isEmailVerified:false,createdAt:{lt:new Date(time.getTime()-7*86400000)}}});
     }
   };
 

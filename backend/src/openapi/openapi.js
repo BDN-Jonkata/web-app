@@ -15,6 +15,14 @@ export function createOpenApiSpec(port = 3001) {
     },
   };
 
+  const apiKeyHeaderParam = {
+    name: 'X-Api-Key',
+    in: 'header',
+    required: false,
+    description: 'Required only when the server sets SIMULATION_API_KEY. Must equal that value.',
+    schema: { type: 'string' },
+  };
+
   const spec = {
     openapi: '3.1.0',
     info: {
@@ -464,7 +472,7 @@ export function createOpenApiSpec(port = 3001) {
           description:
             'Receives an exact JSON simulation payload from an AI agent or test runner, validates per-component frames, updates in-memory active simulation, and broadcasts to connected frontend clients.',
           tags: ['AI Simulation & Decisions'],
-          parameters: [csrfHeaderParam],
+          parameters: [csrfHeaderParam, apiKeyHeaderParam],
           requestBody: {
             required: true,
             content: {
@@ -559,6 +567,8 @@ export function createOpenApiSpec(port = 3001) {
             },
           },
           responses: {
+            '401': { description: 'Missing or wrong X-Api-Key (only when SIMULATION_API_KEY is configured).' },
+            '429': { description: 'Rate limit exceeded.' },
             '200': {
               description: 'Simulation successfully ingested and active in memory.',
               content: {
@@ -603,13 +613,26 @@ export function createOpenApiSpec(port = 3001) {
           },
         },
       },
+      '/api/simulation/events': {
+        get: {
+          summary: 'Subscribe to simulation updates (Server-Sent Events)',
+          description: 'Long-lived text/event-stream. Sends an init event, then update and reset events, plus a heartbeat every 15 seconds. At most 100 streams are served at once.',
+          tags: ['AI Simulation & Decisions'],
+          responses: {
+            '200': { description: 'Event stream.', content: { 'text/event-stream': { schema: { type: 'string' } } } },
+            '503': { description: 'Too many active streams.' },
+          },
+        },
+      },
       '/api/simulation/reset': {
         post: {
           summary: 'Reset simulation to empty baseline',
           description: 'Clears the in-memory active simulation back to unseeded baseline.',
           tags: ['AI Simulation & Decisions'],
-          parameters: [csrfHeaderParam],
+          parameters: [csrfHeaderParam, apiKeyHeaderParam],
           responses: {
+            '401': { description: 'Missing or wrong X-Api-Key (only when SIMULATION_API_KEY is configured).' },
+            '429': { description: 'Rate limit exceeded.' },
             '200': {
               description: 'Simulation reset successfully.',
               content: {

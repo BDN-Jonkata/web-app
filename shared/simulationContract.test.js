@@ -247,3 +247,22 @@ test('handles large 24-step hourly timeline without performance degradation', ()
   const clampedLow = extractActiveFrame(normalized, -10);
   assert.equal(clampedLow.step, 0);
 });
+
+test('simulation payloads cannot smuggle CSS, oversized timelines or odd ids', () => {
+  const frame = {
+    stats: { res: 1000, demand: 3000, mw: { solar: 1, wind: 1, hydro: 1, other: 1 },
+      sectors: [{ label: 'A', mw: 10, color: 'url(http://evil.example/x.png)' }, { label: 'B', mw: 10, color: '#aabbcc' }] },
+    map: { flows: [{ from: 'a', to: 'b', mw: 5, color: 'red; background:url(x)' }] },
+  };
+  const normalized = normalizeSimulationPayload({
+    prompt: 'test', decision: { answer: 'ok' },
+    id: '<script>alert(1)</script>',
+    frames: Array.from({ length: 500 }, () => frame),
+  });
+  assert.equal(normalized.totalSteps, 200);
+  assert.match(normalized.id, /^[0-9a-f-]{36}$/);
+  const [first] = normalized.frames;
+  assert.equal(first.stats.sectors[0].color, '#53615b');
+  assert.equal(first.stats.sectors[1].color, '#aabbcc');
+  assert.equal(first.map.flows[0].color, undefined);
+});

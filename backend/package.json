@@ -22,5 +22,8 @@
     "express": "^5.1.0",
     "nodemailer": "^10.0.14",
     "prisma": "^6.8.2"
+  },
+  "overrides": {
+    "deepmerge-ts": "^8.0.0"
   }
 }

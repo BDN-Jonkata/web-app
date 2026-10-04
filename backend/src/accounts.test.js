@@ -18,8 +18,10 @@ function repository(){
     session:{
       async create({data}){sessions.set(data.tokenHash,data);return data},
       async findUnique({where}){const session=sessions.get(where.tokenHash);return session?{...session,user:users.get(session.userId)}:null},
+      async findMany({where}){return [...sessions.entries()].filter(([,session])=>session.userId===where.userId).map(([tokenHash])=>({tokenHash})).slice(10)},
       async deleteMany({where}){
-        if(where.tokenHash)sessions.delete(where.tokenHash);
+        if(typeof where.tokenHash==='string')sessions.delete(where.tokenHash);
+        if(where.tokenHash?.in)for(const key of where.tokenHash.in)sessions.delete(key);
         if(where.userId){
           for(const [key,session] of sessions.entries()){
             if(session.userId===where.userId&&(!where.NOT||session.id!==where.NOT.id))sessions.delete(key);
@@ -50,18 +52,24 @@ test('registration validates email, name and password before using the database'
   for(const input of [{email:'invalid',password:'valid passphrase here',name:'Test'},{email:'a@b.test',password:'short',name:'Test'},{email:'a@b.test',password:'valid passphrase here',name:'A'}]){
     assert.throws(()=>validateCredentials(input,{register:true}));
   }
-  // 6-30 boundary validation
+  // 6-128 boundary validation; very common passwords are refused
   assert.throws(()=>validateCredentials({email:'a@b.test',password:'12345',name:'Test'},{register:true}), (err) => err.code === 'INVALID_PASSWORD');
-  assert.doesNotThrow(()=>validateCredentials({email:'a@b.test',password:'123456',name:'Test'},{register:true}));
-  assert.doesNotThrow(()=>validateCredentials({email:'a@b.test',password:'a'.repeat(30),name:'Test'},{register:true}));
-  assert.throws(()=>validateCredentials({email:'a@b.test',password:'a'.repeat(31),name:'Test'},{register:true}), (err) => err.code === 'INVALID_PASSWORD');
+  assert.doesNotThrow(()=>validateCredentials({email:'a@b.test',password:'123abc',name:'Test'},{register:true}));
+  assert.doesNotThrow(()=>validateCredentials({email:'a@b.test',password:'a'.repeat(128),name:'Test'},{register:true}));
+  assert.throws(()=>validateCredentials({email:'a@b.test',password:'a'.repeat(129),name:'Test'},{register:true}), (err) => err.code === 'INVALID_PASSWORD');
+  assert.throws(()=>validateCredentials({email:'a@b.test',password:'password',name:'Test'},{register:true}), (err) => err.code === 'INVALID_PASSWORD');
+  // An oversized email is rejected by length before the pattern runs (ReDoS guard).
+  const started=Date.now();
+  assert.throws(()=>validateCredentials({email:'a@'+'a.'.repeat(100000)+' ',password:'valid passphrase here',name:'Test'}), (err) => err.code === 'INVALID_EMAIL');
+  assert.ok(Date.now()-started<200);
 
   assert.equal(validateCredentials({email:' A@B.TEST ',password:'valid passphrase here',name:'Test'},{register:true}).email,'a@b.test');
 });
-test('password hashing limits concurrent work and releases capacity afterward',async()=>{
-  const jobs=await Promise.allSettled([hashPassword('first testing passphrase'),hashPassword('second testing passphrase'),hashPassword('third testing passphrase')]);
-  assert.equal(jobs[0].status,'fulfilled');assert.equal(jobs[1].status,'fulfilled');
-  assert.equal(jobs[2].status,'rejected');assert.equal(jobs[2].reason.code,'AUTH_BUSY');
+test('password hashing queues a bounded amount of work and releases capacity afterward',async()=>{
+  // 2 running + 20 queued are accepted; anything beyond that is refused immediately.
+  const jobs=await Promise.allSettled(Array.from({length:23},(_,index)=>hashPassword('testing passphrase '+index)));
+  assert.equal(jobs.slice(0,22).filter(job=>job.status==='fulfilled').length,22);
+  assert.equal(jobs[22].status,'rejected');assert.equal(jobs[22].reason.code,'AUTH_BUSY');
   assert.match(await hashPassword('later testing passphrase'),/^scrypt\$/);
 });
 test('credentials alone never issue sessions; verified sessions expire and can be revoked',async()=>{
@@ -163,7 +171,7 @@ test('history routes require a session and database failures return a clear erro
   const res={status(value){this.statusCode=value;return this},json(body){this.body=body;return this}};
   await handler({headers:{}},res);assert.equal(res.statusCode,401);
   const failing=createAccountRouter({service:{current:async()=>{throw new Error('private database connection info')}}});
-  const get=failing.stack.find(item=>item.route?.path==='/auth/session').route.stack.at(-1).handle;
+  const get=failing.stack.find(item=>item.route?.path==='/conversations').route.stack.at(-1).handle;
   await get({headers:{}},res);assert.equal(res.statusCode,503);assert.equal(res.body.code,'DATABASE_UNAVAILABLE');
   assert.ok(!res.body.error.includes('private database'));
 });

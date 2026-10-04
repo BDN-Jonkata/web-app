@@ -110,7 +110,7 @@ const errors={
   DATABASE_UNAVAILABLE:['Базата данни за вход и история не е достъпна. Стартирай PostgreSQL и изпълни npm run db:migrate от web-app.','Login/history database unavailable. Start PostgreSQL and run npm run db:migrate from web-app.'],
   INVALID_CREDENTIALS:['Невалиден имейл или парола.','Incorrect email or password.'],
   AUTH_BUSY:['Входът е временно натоварен. Опитай отново след малко.','Login is temporarily busy. Please try again shortly.'],
-  INVALID_PASSWORD:['Паролата трябва да е между 6 и 30 знака.','Password must be 6–30 characters.'],
+  INVALID_PASSWORD:['Паролата трябва да е между 6 и 128 знака и да не е често срещана.','Password must be 6–128 characters and not a common password.'],
   INVALID_EMAIL:['Въведи валиден имейл.','Enter a valid email address.'],
   INVALID_NAME:['Името трябва да е между 2 и 60 знака.','Name must be 2–60 characters.'],
   REGISTRATION_FAILED:['Неуспешна регистрация. Опитай с друг имейл.','Registration failed. Try another email.'],

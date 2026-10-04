@@ -1,5 +1,5 @@
 import {Router} from 'express';
-import {createAccountService,readSessionToken,SESSION_COOKIE,SESSION_MS,accountError} from './accounts.js';
+import {createAccountService,readSessionToken,accountError} from './accounts.js';
 import {createChatLimiter} from './chat.js';
 export function csrfGuard(req,res,next) {
   if(['GET','HEAD','OPTIONS'].includes(req.method))return next();
@@ -7,11 +7,11 @@ export function csrfGuard(req,res,next) {
   const referer=req.get('Referer')||'';
   const isReference=referer.includes('/reference')||referer.includes('/scalar')||referer.includes('/docs');
   const authHeader=req.get('Authorization')||'';
-  if(req.get('X-Requested-With')==='energy-web-app'||(isReference&&req.get('Sec-Fetch-Site')==='same-origin')||authHeader.startsWith('Bearer ')||(typeof req.path==='string'&&req.path.startsWith('/simulation')))return next();
+  if(req.get('X-Requested-With')==='energy-web-app'||(isReference&&req.get('Sec-Fetch-Site')==='same-origin')||/^Bearer [A-Za-z0-9_-]{43}$/.test(authHeader)||(typeof req.path==='string'&&req.path.startsWith('/simulation')))return next();
   return res.status(403).json({code:'CSRF_REJECTED',error:'Заявката не е разрешена.'});
 }
-export function createAccountRouter({service=createAccountService(),secure=process.env.NODE_ENV==='production'}={}) {
-  const router=Router(),cookieOptions={httpOnly:true,secure,sameSite:'strict',path:'/api',maxAge:SESSION_MS};
+export function createAccountRouter({service=createAccountService()}={}) {
+  const router=Router();
   const handle=fn=>async(req,res)=>{
     try {await fn(req,res)}catch(error){
       if(!error.status||!error.code){
@@ -26,16 +26,7 @@ export function createAccountRouter({service=createAccountService(),secure=proce
     if(!user)throw accountError(401,'LOGIN_REQUIRED','Влез в профила си.');
     return user;
   };
-  router.get('/auth/session',handle(async(req,res)=>res.json({user:await service.current(readSessionToken(req))})));
-  router.post('/auth/logout',handle(async(req,res)=>{
-    await service.logout(readSessionToken(req));
-    res.clearCookie(SESSION_COOKIE,{httpOnly:true,secure,sameSite:'strict',path:'/api'}).json({user:null});
-  }));
-  router.post('/auth/refresh-token',createChatLimiter({limit:10}),handle(async(req,res)=>{
-    const token=req.body?.token||req.body?.refreshToken||readSessionToken(req);
-    const result=await service.refreshToken(token);
-    res.cookie(SESSION_COOKIE,result.token,cookieOptions).json({user:result.user,token:result.token});
-  }));
+  // Session, logout and refresh-token live in services/auth.js (authController); only history and preferences are here.
   router.put('/auth/preferences',handle(async(req,res)=>{
     const user=await requireUser(req);res.json({user:await service.preferences(user.id,req.body)});
   }));

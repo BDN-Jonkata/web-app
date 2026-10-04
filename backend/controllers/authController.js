@@ -27,7 +27,7 @@ function handleAuthError(err, res, defaultCode = 'AUTH_FAILED', defaultStatus = 
 export function createAuthController({
   service = createAccountService(),
   emailAuth = createEmailAuthService(),
-  secure = process.env.NODE_ENV === 'production',
+  secure = process.env.NODE_ENV === 'production' || process.env.COOKIE_SECURE === 'true',
 } = {}) {
   const cookieOptions = { httpOnly: true, secure, sameSite: 'strict', path: '/api', maxAge: SESSION_MS };
   const challengeOptions={...cookieOptions,maxAge:CHALLENGE_MS};
@@ -100,8 +100,7 @@ export function createAuthController({
 
     async refreshToken(req, res) {
       try {
-        const token = req.body?.token || req.body?.refreshToken || readSessionToken(req);
-        const result = await service.refreshToken(token);
+        const result = await service.refreshToken(readSessionToken(req));
         res
           .cookie(SESSION_COOKIE, result.token, cookieOptions)
           .status(200)

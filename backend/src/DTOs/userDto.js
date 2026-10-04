@@ -51,8 +51,8 @@ export const userDto = {
       err.status = 400;
       throw err;
     }
-    if (password.length < 6 || password.length > 30) {
-      const err = new Error('Паролата трябва да е между 6 и 30 знака.');
+    if (password.length < 6 || password.length > 128) {
+      const err = new Error('Паролата трябва да е между 6 и 128 знака и да не е често срещана.');
       err.code = 'INVALID_PASSWORD';
       err.status = 400;
       throw err;

@@ -32,11 +32,31 @@ export function createChatHandler(provider) {
   };
 }
 
-export function createChatLimiter({limit=10,windowMs=60000,now=Date.now}={}) {
+// IPv6 clients usually own a whole /64, so rate-limit on that prefix instead of the full address.
+function limiterKey(ip){
+  if(!ip)return 'local';
+  const value=ip.startsWith('::ffff:')?ip.slice(7):ip;
+  if(!value.includes(':'))return value;
+  const [head]=value.split('%');
+  const groups=head.includes('::')?(()=>{
+    const [left,right]=head.split('::'),l=left?left.split(':'):[],r=right?right.split(':'):[];
+    return [...l,...Array(Math.max(0,8-l.length-r.length)).fill('0'),...r];
+  })():head.split(':');
+  return groups.slice(0,4).map(group=>group.toLowerCase().replace(/^0+(?=.)/,'')).join(':')+'::/64';
+}
+
+// `shared` makes every client count against one bucket (used for the overall daily AI budget).
+export function createChatLimiter({limit=10,windowMs=60000,now=Date.now,shared=false}={}) {
   const windows=new Map();
+  let nextSweep=0;
   return (req,res,next)=>{
-    const time=now(),key=req.ip||'local';
-    for(const [ip,entry] of windows)if(time>=entry.reset)windows.delete(ip);
+    const time=now(),key=shared?'all-clients':limiterKey(req.ip);
+    // Sweep expired windows at most once per window, not on every request.
+    if(time>=nextSweep){
+      for(const [ip,entry] of windows)if(time>=entry.reset)windows.delete(ip);
+      nextSweep=time+windowMs;
+    }
+    if(windows.get(key)&&time>=windows.get(key).reset)windows.delete(key);
     const entry=windows.get(key)||{count:0,reset:time+windowMs};
     if(entry.count>=limit){
       const retryAfter=Math.max(1,Math.ceil((entry.reset-time)/1000));

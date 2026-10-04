@@ -63,10 +63,33 @@ test('resend observes cooldown, invalidates old code and limits sends',async()=>
   view.advance(61000);await view.auth.resend(pending.challengeToken);
   view.advance(61000);await rejects(view.auth.resend(pending.challengeToken),'EMAIL_RATE_LIMIT');
 });
-test('account-wide hourly budget survives new login challenges',async()=>{
+test('hourly budget per purpose survives new login challenges',async()=>{
+  const view=fixture();await view.auth.register(input);
+  for(let i=0;i<5;i++){view.advance(61000);await view.auth.login(input)}
+  view.advance(61000);await rejects(view.auth.login(input),'EMAIL_RATE_LIMIT');assert.equal(view.codes.length,6);
+});
+test('a stranger spamming password recovery cannot lock the owner out of login',async()=>{
+  const view=fixture();await view.auth.register(input);
+  for(let i=0;i<5;i++){view.advance(61000);await view.auth.forgotPassword({email:input.email})}
+  // Recovery is now throttled (silently, same response), but the owner can still sign in.
+  view.advance(61000);const pending=await view.auth.login(input);
+  assert.equal(pending.verificationRequired,true);assert.equal(view.codes.at(-1).purpose,'LOGIN');
+});
+test('wrong reset codes are counted across challenges and stop further recovery codes',async()=>{
+  const view=fixture();await view.auth.register(input);
+  for(let round=0;round<2;round++){
+    view.advance(61000);const pending=await view.auth.forgotPassword({email:input.email});
+    for(let i=0;i<5;i++)await rejects(view.auth.resetPassword({token:pending.challengeToken,code:'000000',password:'newPass123x',confirmPassword:'newPass123x'}));
+  }
+  const sent=view.codes.length;view.advance(61000);
+  const silent=await view.auth.forgotPassword({email:input.email});
+  assert.equal(silent.verificationRequired,true);assert.equal(view.codes.length,sent);
+});
+test('the account-wide email cap still stops mailbox flooding across purposes',async()=>{
   const view=fixture();await view.auth.register(input);
   for(let i=0;i<4;i++){view.advance(61000);await view.auth.login(input)}
-  view.advance(61000);await rejects(view.auth.login(input),'EMAIL_RATE_LIMIT');assert.equal(view.codes.length,5);
+  for(let i=0;i<5;i++){view.advance(61000);await view.auth.forgotPassword({email:input.email})}
+  view.advance(61000);await rejects(view.auth.login(input),'EMAIL_RATE_LIMIT');
 });
 test('forgotten-password response and resend have the same shape for absent accounts',async()=>{
   const view=fixture();await view.auth.register(input);view.advance(61000);
@@ -126,10 +149,15 @@ test('reset succeeds if alert delivery fails; durable pending alert is retried',
   assert.equal(view.notifications.length,1);assert.ok([...view.tables.emailNotification.values()][0].sentAt);
 });
 test('SMTP failure cannot create a login session and duplicate retry never overwrites an account',async()=>{
-  const view=fixture();view.fail();await rejects(view.auth.register(input),'EMAIL_UNAVAILABLE');assert.equal(view.tables.session.size,0);
+  const view=fixture();view.fail();
+  // Delivery is deferred so a new and an existing email behave alike; a failed send just leaves the code to be resent.
+  assert.equal((await view.auth.register(input)).verificationRequired,true);assert.equal(view.codes.length,0);assert.equal(view.tables.session.size,0);
   const before=[...view.tables.user.values()][0].passwordHash;view.fail(false);view.advance(61000);
   await view.auth.register(input);assert.equal(view.tables.user.size,1);assert.equal([...view.tables.user.values()][0].passwordHash,before);
-  await rejects(view.auth.register({...input,password:'attackerPass123'}),'REGISTRATION_FAILED');
+  // A different password for an existing email looks like a normal signup (no account enumeration) but sends nothing.
+  const sent=view.codes.length,fake=await view.auth.register({...input,password:'attackerPass123'});
+  assert.equal(fake.verificationRequired,true);assert.ok(fake.challengeToken);assert.equal(view.codes.length,sent);
+  assert.equal([...view.tables.user.values()][0].passwordHash,before);
 });
 test('inactive accounts and credentials changed after challenge cannot verify',async()=>{
   const view=fixture(),pending=await view.auth.register(input),user=[...view.tables.user.values()][0];

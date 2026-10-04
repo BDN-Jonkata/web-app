@@ -72,8 +72,8 @@ export function subscribeSimulationEvents(onEvent) {
   };
 }
 
-// Global browser window hooks for agent scripts, tests, and manual developer inputs
-if (typeof window !== 'undefined') {
+// Dev-only browser hooks for agent scripts and manual input; not exposed in production builds.
+if (typeof window !== 'undefined' && import.meta.env?.DEV) {
   window.setSimulationData = async function (json) {
     return await sendSimulationDecision(json);
   };
