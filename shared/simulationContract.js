@@ -172,14 +172,76 @@ export function sanitizeFrame(raw, index = 0) {
   return { step, hour, label, stats, map, detail };
 }
 
+const SECTOR_COLORS = { 'Индустрия': '#14201c', 'Домакинства': '#53615b', 'Услуги и търговия': '#8b9791', 'Транспорт и селско ст.': '#c0c8c3' };
+const number = value => typeof value === 'number' && Number.isFinite(value);
+const MERGED_KEYS = ['mw', 'sectors', 'sites', 'cities', 'notes'];
+
+/**
+ * Expands the compact v2 payload ({ v: 2, ... }) into the full format the sanitizers understand.
+ * Frames inherit every field they omit from the previous frame (maps are merged per key, hour advances by 1),
+ * so a timeline only sends what changes. res, coverage, balance, sector shares and labels are derived.
+ */
+function expandCompactPayload(input) {
+  const scenario = plain(input.scenario) ? input.scenario : {};
+  let previous = null;
+  const frames = (Array.isArray(input.frames) ? input.frames.slice(0, MAX_FRAMES) : []).map(raw => {
+    if (!plain(raw)) return null;
+    const hour = number(raw.hour) ? raw.hour : previous ? (previous.hour + 1) % 24 : number(scenario.hour) ? scenario.hour : 12;
+    const frame = { ...previous, ...raw, hour };
+    for (const key of MERGED_KEYS) {
+      if (plain(previous?.[key]) && plain(raw[key])) frame[key] = { ...previous[key], ...raw[key] };
+    }
+    previous = frame;
+
+    const mw = plain(frame.mw) ? frame.mw : null;
+    const res = number(frame.res) ? frame.res
+      : mw ? Object.values(mw).reduce((sum, value) => sum + (number(value) && value > 0 ? value : 0), 0) : undefined;
+    const pairs = value => (plain(value) ? Object.entries(value) : []);
+    return {
+      hour: frame.hour,
+      label: raw.label,
+      stats: {
+        res,
+        demand: frame.demand,
+        mw,
+        sectors: pairs(frame.sectors).map(([label, value]) => ({ label, mw: value, color: SECTOR_COLORS[label] })),
+      },
+      map: {
+        sites: Object.fromEntries(pairs(frame.sites).map(([id, output]) => [id, { output }])),
+        cities: Object.fromEntries(pairs(frame.cities).filter(([, value]) => Array.isArray(value))
+          .map(([id, [demand, resReceived]]) => [id, { demand, resReceived }])),
+        flows: Array.isArray(frame.flows)
+          ? frame.flows.filter(Array.isArray).map(([from, to, value]) => ({ from, to, mw: value }))
+          : [],
+        nuclear: number(frame.nuclear) ? { output: frame.nuclear } : null,
+      },
+      detail: Object.fromEntries(pairs(frame.notes).map(([id, aiDecision]) => [id, { aiDecision }])),
+    };
+  });
+
+  return {
+    id: input.id,
+    prompt: input.prompt,
+    decision: {
+      answer: input.answer,
+      actions: Array.isArray(input.actions)
+        ? input.actions.filter(Array.isArray).map(([component, action, target, value]) => ({ component, action, target, value }))
+        : [],
+    },
+    scenario: { ...scenario, hour: frames.find(Boolean)?.hour, stepDurationMs: scenario.stepMs },
+    frames,
+  };
+}
+
 /**
  * Normalizes and validates the complete AI simulation payload.
- * Supports both single-frame payloads and multi-frame timelines.
+ * Supports both single-frame payloads and multi-frame timelines, in the full or the compact v2 format.
  */
 export function normalizeSimulationPayload(input) {
   if (!plain(input)) {
     throw new TypeError('Невалиден формат: очаква се JSON обект.');
   }
+  if (input.v === 2) input = expandCompactPayload(input);
 
   if (typeof input.prompt !== 'string' || !input.prompt.trim()) {
     throw new TypeError('Липсва prompt за симулацията.');
