@@ -4,6 +4,7 @@ import {
   normalizeSimulationPayload,
   sanitizeStats,
   sanitizeMap,
+  sanitizeDetail,
   sanitizeFrame,
   extractActiveFrame,
 } from './simulationContract.js';
@@ -122,9 +123,18 @@ test('normalizeSimulationPayload accepts a single-snapshot with top-level compon
 });
 
 test('incomplete or missing component data is omitted and not visualized', () => {
-  // If stats is missing mandatory numbers, it is returned as null
-  const invalidStats = sanitizeStats({ mw: { solar: 100 } });
-  assert.equal(invalidStats, null);
+  // Missing demand or res nullifies stats completely
+  const missingDemand = sanitizeStats({ res: 1500 });
+  assert.equal(missingDemand, null);
+
+  const missingRes = sanitizeStats({ demand: 4000 });
+  assert.equal(missingRes, null);
+
+  const nonNumericRes = sanitizeStats({ res: 'invalid', demand: 3000 });
+  assert.equal(nonNumericRes, null);
+
+  const negativeRes = sanitizeStats({ res: -50, demand: 3000 });
+  assert.equal(negativeRes, null);
 
   // If a site output is not numeric or negative, it is stripped
   const sanitizedMap = sanitizeMap({
@@ -148,5 +158,92 @@ test('incomplete or missing component data is omitted and not visualized', () =>
 test('throws clear TypeError when payload is missing prompt or components', () => {
   assert.throws(() => normalizeSimulationPayload(null), /Невалиден формат/);
   assert.throws(() => normalizeSimulationPayload({}), /Липсва prompt/);
+  assert.throws(() => normalizeSimulationPayload({ prompt: '   ' }), /Липсва prompt/);
   assert.throws(() => normalizeSimulationPayload({ prompt: 'test' }), /трябва да съдържа поне един кадър/);
+  assert.throws(() => normalizeSimulationPayload({ prompt: 'test', frames: [] }), /трябва да съдържа поне един кадър/);
+});
+
+test('scenario numbers are safely bounded and clamped', () => {
+  const payload = {
+    prompt: 'Stress test weather parameters',
+    scenario: {
+      cloud: 250, // should clamp to 100
+      wind: -50,  // should clamp to 0
+      hour: 35,   // should clamp to 24
+      stepDurationMs: 50, // should clamp to min 200
+    },
+    components: {
+      stats: { res: 100, demand: 200 },
+    },
+  };
+
+  const normalized = normalizeSimulationPayload(payload);
+  assert.equal(normalized.scenario.cloud, 100);
+  assert.equal(normalized.scenario.wind, 0);
+  assert.equal(normalized.scenario.hour, 24);
+  assert.equal(normalized.scenario.stepDurationMs, 200);
+});
+
+test('sanitizeDetail keeps only known valid entity IDs', () => {
+  const detail = sanitizeDetail({
+    belovo: { aiDecision: 'Peaking dispatch' },
+    sofia: { customNotes: 'Active curtailment' },
+    unknown_village: { aiDecision: 'Ignored' },
+    hacker_site: { aiDecision: 'Ignored' },
+  });
+
+  assert.equal(detail.belovo.aiDecision, 'Peaking dispatch');
+  assert.equal(detail.sofia.customNotes, 'Active curtailment');
+  assert.equal(detail.unknown_village, undefined);
+  assert.equal(detail.hacker_site, undefined);
+});
+
+test('handles large 24-step hourly timeline without performance degradation', () => {
+  const frames = Array.from({ length: 24 }, (_, i) => ({
+    step: i,
+    hour: i,
+    label: `${String(i).padStart(2, '0')}:00`,
+    stats: {
+      res: 1000 + i * 50,
+      demand: 3000 + (i >= 8 && i <= 20 ? 1000 : 0),
+      mw: { solar: i >= 6 && i <= 18 ? 500 : 0, wind: 200, hydro: 300, other: 50 },
+    },
+    map: {
+      sites: {
+        belovo: { output: 300 + i * 10 },
+      },
+      cities: {
+        sofia: { demand: 1000 + i * 20 },
+      },
+    },
+  }));
+
+  const payload = {
+    prompt: 'Full 24-hour daily grid simulation',
+    frames,
+  };
+
+  const normalized = normalizeSimulationPayload(payload);
+  assert.equal(normalized.totalSteps, 24);
+  assert.equal(normalized.isTimeline, true);
+
+  const startFrame = extractActiveFrame(normalized, 0);
+  assert.equal(startFrame.hour, 0);
+  assert.equal(startFrame.stats.res, 1000);
+
+  const noonFrame = extractActiveFrame(normalized, 12);
+  assert.equal(noonFrame.hour, 12);
+  assert.equal(noonFrame.stats.res, 1600);
+  assert.equal(noonFrame.stats.mw.solar, 500);
+
+  const endFrame = extractActiveFrame(normalized, 23);
+  assert.equal(endFrame.hour, 23);
+  assert.equal(endFrame.stats.res, 2150);
+
+  // Boundary clamping in extractActiveFrame
+  const clampedHigh = extractActiveFrame(normalized, 999);
+  assert.equal(clampedHigh.step, 23);
+
+  const clampedLow = extractActiveFrame(normalized, -10);
+  assert.equal(clampedLow.step, 0);
 });

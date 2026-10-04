@@ -87,3 +87,66 @@ test('unseeded simulation state evaluates to null without inventing fake numbers
   const activeFrame = extractActiveFrame(null, 0);
   assert.equal(activeFrame, null);
 });
+
+test('timeline scrubbing advances steps correctly and clamps at bounds', () => {
+  const payload = {
+    prompt: 'Timeline stepping test',
+    frames: [
+      { step: 0, hour: 12, label: '12:00', stats: { res: 2000, demand: 2500 } },
+      { step: 1, hour: 13, label: '13:00', stats: { res: 2400, demand: 2600 } },
+      { step: 2, hour: 14, label: '14:00', stats: { res: 2200, demand: 2700 } },
+    ],
+  };
+
+  const simulation = normalizeSimulationPayload(payload);
+  assert.equal(simulation.totalSteps, 3);
+  assert.equal(simulation.isTimeline, true);
+
+  // Step 0
+  const frame0 = extractActiveFrame(simulation, 0);
+  assert.equal(frame0.step, 0);
+  assert.equal(frame0.stats.res, 2000);
+
+  // Step 1
+  const frame1 = extractActiveFrame(simulation, 1);
+  assert.equal(frame1.step, 1);
+  assert.equal(frame1.stats.res, 2400);
+
+  // Step 2
+  const frame2 = extractActiveFrame(simulation, 2);
+  assert.equal(frame2.step, 2);
+  assert.equal(frame2.stats.res, 2200);
+
+  // Scrubbing beyond upper bound clamps to last frame
+  const clampedHigh = extractActiveFrame(simulation, 10);
+  assert.equal(clampedHigh.step, 2);
+
+  // Scrubbing below 0 clamps to first frame
+  const clampedLow = extractActiveFrame(simulation, -5);
+  assert.equal(clampedLow.step, 0);
+
+  // Replaying resets step pointer to 0
+  let currentStep = 2; // user at the end
+  currentStep = 0;     // replay trigger
+  const replayedFrame = extractActiveFrame(simulation, currentStep);
+  assert.equal(replayedFrame.step, 0);
+  assert.equal(replayedFrame.stats.res, 2000);
+});
+
+test('frames with missing stats omit stats without breaking the frame', () => {
+  const payload = {
+    prompt: 'Partial frame simulation without stats',
+    frames: [
+      {
+        step: 0,
+        hour: 10,
+        map: { sites: { belovo: { output: 400 } } },
+      },
+    ],
+  };
+
+  const simulation = normalizeSimulationPayload(payload);
+  const frame = extractActiveFrame(simulation, 0);
+  assert.equal(frame.stats, null); // completely omitted, not partial or fake
+  assert.equal(frame.map.sites.belovo.output, 400);
+});
