@@ -1,4 +1,5 @@
 import {createGroqProvider} from './groq.js';
+import {createAgentProvider} from './agent.js';
 import {AIError} from './errors.js';
 
 // The frontend depends on this contract, not on Groq or an MCP transport.
@@ -6,6 +7,7 @@ import {AIError} from './errors.js';
 export function createAIProvider({env=process.env,fetchImpl=globalThis.fetch}={}) {
   const name=(env.AI_PROVIDER||'groq').trim().toLowerCase();
   if(name==='groq')return createGroqProvider({apiKey:env.GROQ_API_KEY||'',model:env.GROQ_MODEL||undefined,fetchImpl});
+  if(name==='agent')return createAgentProvider({url:env.AGENT_URL||undefined,fetchImpl});
   return {
     status:()=>({provider:name,model:null,configured:false}),
     async generate(){
