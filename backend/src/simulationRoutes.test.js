@@ -67,25 +67,15 @@ test('simulationRoutes: POST /decision validates and ingests simulation JSON', a
 
   const payload = {
     prompt: 'Winter cold snap with Belovo peaking dispatch',
-    decision: {
-      answer: 'Belovo hydro dispatched at 736 MW.',
-      summary: 'Hydro covers evening peak.',
-    },
-    components: {
-      stats: {
-        res: 1450,
+    answer: 'Belovo hydro dispatched at 736 MW.',
+    frames: [
+      {
         demand: 4276,
         mw: { solar: 0, wind: 76, hydro: 1339, other: 35 },
+        sites: { belovo: 736.2 },
+        cities: { sofia: [1546, 380] },
       },
-      map: {
-        sites: {
-          belovo: { output: 736.2 },
-        },
-        cities: {
-          sofia: { demand: 1546, resReceived: 380 },
-        },
-      },
-    },
+    ],
   };
 
   const { req, res } = createMockReqRes({ method: 'POST', url: '/decision', body: payload });
@@ -107,20 +97,10 @@ test('simulationRoutes: POST /decision ingests multi-step timeline simulations',
 
   const timelinePayload = {
     prompt: '2-step evening ramp simulation',
-    decision: { answer: 'Step 0 and step 1 executed.' },
+    answer: 'Step 0 and step 1 executed.',
     frames: [
-      {
-        step: 0,
-        hour: 18,
-        stats: { res: 1000, demand: 3000 },
-        map: { sites: { belovo: { output: 500 } } },
-      },
-      {
-        step: 1,
-        hour: 19,
-        stats: { res: 1400, demand: 3800 },
-        map: { sites: { belovo: { output: 700 } } },
-      },
+      { hour: 18, demand: 3000, res: 1000, sites: { belovo: 500 } },
+      { demand: 3800, res: 1400, sites: { belovo: 700 } },
     ],
   };
 
@@ -190,7 +170,7 @@ test('simulationRoutes: GET /events streams SSE events and broadcasts to multipl
   // Trigger POST /decision: both clients must receive event: update
   const payload = {
     prompt: 'Live SSE broadcast test',
-    components: { stats: { res: 500, demand: 800 } },
+    frames: [{ demand: 800, res: 500 }],
   };
   const decisionMock = createMockReqRes({ method: 'POST', url: '/decision', body: payload });
   await decisionHandler(decisionMock.req, decisionMock.res);

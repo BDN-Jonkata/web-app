@@ -5,55 +5,21 @@ import { extractActiveFrame, normalizeSimulationPayload } from '../../shared/sim
 test('simulation adapter extracts clean frame data without seeded numbers', () => {
   const payload = {
     prompt: 'Severe winter peak simulation',
-    decision: {
-      answer: 'Peaking hydro dispatched, demand curtailed.',
-      summary: 'Hydro at 736 MW, deficit covered.',
-      actions: [
-        { component: 'hydro', action: 'dispatch_max', target: 'belovo', value: 736 },
-      ],
-    },
-    scenario: {
-      season: 'winter',
-      cloud: 85,
-      wind: 30,
-      hour: 19,
-    },
+    answer: 'Peaking hydro dispatched, demand curtailed.',
+    actions: [['hydro', 'dispatch_max', 'belovo', 736]],
+    scenario: { season: 'winter', cloud: 85, wind: 30 },
     frames: [
       {
-        step: 0,
         hour: 19,
         label: '19:00 - Evening Peak',
-        stats: {
-          res: 1450,
-          demand: 4276,
-          coverage: 33.9,
-          balance: -2826,
-          mw: { solar: 0, wind: 76, hydro: 1339, other: 35 },
-          sectors: [
-            { label: 'Индустрия', mw: 1710, pct: 0.4 },
-            { label: 'Домакинства', mw: 1625, pct: 0.38 },
-          ],
-        },
-        map: {
-          sites: {
-            belovo: { output: 736.2, status: 'peaking_max' },
-            kavarna: { output: 45.2, status: 'active' },
-          },
-          cities: {
-            sofia: { demand: 1546, resReceived: 380 },
-            plovdiv: { demand: 651, resReceived: 580 },
-          },
-          flows: [
-            { from: 'belovo', to: 'sofia', mw: 368.1 },
-          ],
-          nuclear: { output: 2000, status: 'baseload' },
-        },
-        detail: {
-          belovo: {
-            customNotes: 'Max peaking output.',
-            aiDecision: 'Dispatched for grid frequency control.',
-          },
-        },
+        demand: 4276,
+        mw: { solar: 0, wind: 76, hydro: 1339, other: 35 },
+        sectors: { 'Индустрия': 1710, 'Домакинства': 1625 },
+        sites: { belovo: 736.2, kavarna: 45.2 },
+        cities: { sofia: [1546, 380], plovdiv: [651, 580] },
+        flows: [['belovo', 'sofia']],
+        nuclear: 2000,
+        notes: { belovo: 'Dispatched for grid frequency control.' },
       },
     ],
   };
@@ -92,9 +58,9 @@ test('timeline scrubbing advances steps correctly and clamps at bounds', () => {
   const payload = {
     prompt: 'Timeline stepping test',
     frames: [
-      { step: 0, hour: 12, label: '12:00', stats: { res: 2000, demand: 2500 } },
-      { step: 1, hour: 13, label: '13:00', stats: { res: 2400, demand: 2600 } },
-      { step: 2, hour: 14, label: '14:00', stats: { res: 2200, demand: 2700 } },
+      { hour: 12, demand: 2500, res: 2000 },
+      { demand: 2600, res: 2400 },
+      { demand: 2700, res: 2200 },
     ],
   };
 
@@ -110,6 +76,7 @@ test('timeline scrubbing advances steps correctly and clamps at bounds', () => {
   // Step 1
   const frame1 = extractActiveFrame(simulation, 1);
   assert.equal(frame1.step, 1);
+  assert.equal(frame1.label, '13:00');
   assert.equal(frame1.stats.res, 2400);
 
   // Step 2
@@ -136,13 +103,7 @@ test('timeline scrubbing advances steps correctly and clamps at bounds', () => {
 test('frames with missing stats omit stats without breaking the frame', () => {
   const payload = {
     prompt: 'Partial frame simulation without stats',
-    frames: [
-      {
-        step: 0,
-        hour: 10,
-        map: { sites: { belovo: { output: 400 } } },
-      },
-    ],
+    frames: [{ hour: 10, sites: { belovo: 400 } }],
   };
 
   const simulation = normalizeSimulationPayload(payload);

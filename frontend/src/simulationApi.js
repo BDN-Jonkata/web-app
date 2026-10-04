@@ -15,14 +15,15 @@ export async function fetchSimulationState({ signal } = {}) {
 }
 
 export async function sendSimulationDecision(payload, { signal } = {}) {
-  const normalized = normalizeSimulationPayload(payload);
+  // Fail fast in the browser; the backend normalizes the same payload again.
+  normalizeSimulationPayload(payload);
   const res = await fetch('/api/simulation/decision', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'X-Requested-With': 'energy-web-app',
     },
-    body: JSON.stringify(normalized),
+    body: JSON.stringify(payload),
     signal,
   });
   if (!res.ok) {
