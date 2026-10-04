@@ -27,11 +27,6 @@ export function createAccountRouter({service=createAccountService(),secure=proce
     return user;
   };
   router.get('/auth/session',handle(async(req,res)=>res.json({user:await service.current(readSessionToken(req))})));
-  for(const action of ['register','login'])router.post('/auth/'+action,createChatLimiter({limit:5}),handle(async(req,res)=>{
-    const result=await service[action](req.body);
-    await service.logout(readSessionToken(req));
-    res.cookie(SESSION_COOKIE,result.token,cookieOptions).status(action==='register'?201:200).json({user:result.user,token:result.token});
-  }));
   router.post('/auth/logout',handle(async(req,res)=>{
     await service.logout(readSessionToken(req));
     res.clearCookie(SESSION_COOKIE,{httpOnly:true,secure,sameSite:'strict',path:'/api'}).json({user:null});
@@ -40,12 +35,6 @@ export function createAccountRouter({service=createAccountService(),secure=proce
     const token=req.body?.token||req.body?.refreshToken||readSessionToken(req);
     const result=await service.refreshToken(token);
     res.cookie(SESSION_COOKIE,result.token,cookieOptions).json({user:result.user,token:result.token});
-  }));
-  router.post('/auth/reset-password',createChatLimiter({limit:5}),handle(async(req,res)=>{
-    const sessionToken=readSessionToken(req);
-    const token=req.body?.token||sessionToken;
-    const password=req.body?.password;
-    res.json(await service.resetPassword({token,password,sessionToken}));
   }));
   router.put('/auth/preferences',handle(async(req,res)=>{
     const user=await requireUser(req);res.json({user:await service.preferences(user.id,req.body)});

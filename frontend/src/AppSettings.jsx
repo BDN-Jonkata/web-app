@@ -2,6 +2,7 @@ import {createContext,useContext,useEffect,useMemo,useState} from 'react';
 import {DEFAULT_PREFERENCES,normalizePreferences} from '../../shared/preferences.js';
 import {translate,errorText} from './i18n.js';
 import {api} from './api.js';
+import {isVerifiedAuthentication} from './authFlow.js';
 
 const Context=createContext(null),PREFS_KEY='energy-bg:preferences:v1';
 function initialPreferences(){
@@ -45,7 +46,14 @@ export function AppSettingsProvider({children}) {
   },[preferences,user?.id]);
   async function authenticate(action,credentials) {
     const data=await api('/auth/'+action,{method:'POST',body:{...credentials,preferences}});
+    if(data.verificationRequired)return data;
+    if(!isVerifiedAuthentication(data))throw new Error('Входът не е завършен.');
     setUser(data.user);setPreferences(normalizePreferences(data.user.preferences));setNotice(null);setSessionReady(true);
+    return data;
+  }
+  async function resetPassword(fields){
+    const data=await api('/auth/reset-password',{method:'POST',body:fields});
+    setUser(null);setNotice(null);return data;
   }
   async function logout(){
     await api('/auth/logout',{method:'POST',body:{}});
@@ -55,7 +63,7 @@ export function AppSettingsProvider({children}) {
     language:preferences.language,t:key=>translate(preferences.language,key),
     errorText:error=>errorText(error,preferences.language),
     setPreference:(key,value)=>setPreferences(current=>normalizePreferences({...current,[key]:value})),
-    authenticate,logout}),[preferences,user,sessionReady,notice]);
+    authenticate,resetPassword,logout}),[preferences,user,sessionReady,notice]);
   return <Context.Provider value={value}>{children}</Context.Provider>;
 }
 export const useAppSettings=()=>useContext(Context);

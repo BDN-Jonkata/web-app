@@ -177,6 +177,10 @@ footer { color:var(--muted); }
 .primary-button { border:0; border-radius:9px; padding:12px; background:var(--button-bg); color:var(--button-fg); font-size:13px; font-weight:500; }
 .primary-button:disabled { opacity:.6; }
 .guest-button { display:block; margin:15px auto 0; border:0; background:transparent; font-size:12px; color:var(--muted); }
+.auth-link { display:flex; align-items:center; justify-content:center; gap:6px; width:100%; margin-top:12px; padding:5px; border:0; background:transparent; color:var(--accent); font-size:13px; }
+.auth-link:disabled { opacity:.5; }
+.auth-dialog .verification-code { font-family:var(--mono); font-size:23px; letter-spacing:.4em; text-align:center; }
+.auth-notice { color:var(--accent); font-size:13px; line-height:1.5; margin:0; }
 @media(min-width:781px) and (max-width:1200px) { .top-center em { display:none; } }
 @media(min-width:781px) and (max-width:1050px) { .reset>span { display:none; } }
 @media(max-width:780px) { .auth-dialog { padding:22px; } }

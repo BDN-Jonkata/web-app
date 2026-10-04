@@ -1,34 +1,7 @@
-import {useEffect,useRef,useState} from 'react';
+import {useRef,useState} from 'react';
 import {Check,Sun,Moon,Monitor,Leaf,Sunset,LogIn,LogOut,UserRound,X,Globe} from 'lucide-react';
 import {useAppSettings} from './AppSettings.jsx';
-
-function AuthDialog({onClose}) {
-  const {t,authenticate,errorText}=useAppSettings(),ref=useRef(null);
-  const [mode,setMode]=useState('login'),[pending,setPending]=useState(false),[error,setError]=useState(null);
-  useEffect(()=>{const dialog=ref.current;dialog.showModal();return ()=>dialog.close()},[]);
-  async function submit(event){
-    event.preventDefault();if(pending)return;
-    const fields=new FormData(event.currentTarget);setError(null);setPending(true);
-    try{await authenticate(mode,{email:fields.get('email'),password:fields.get('password'),name:fields.get('name')});onClose()}
-    catch(error){setError(error)}finally{setPending(false)}
-  }
-  return <dialog className="auth-dialog" ref={ref} aria-labelledby="auth-title" onCancel={event=>{event.preventDefault();if(!pending)onClose()}}>
-    <button className="dialog-close close" disabled={pending} aria-label={t('Затвори')} onClick={onClose}><X size={18}/></button>
-    <div className="auth-icon"><UserRound size={23}/></div><h2 id="auth-title">{t(mode==='login'?'Влез в профила си':'Създай профил')}</h2>
-    <p className="auth-subtitle">{t('За запазване между устройства')}</p>
-    <div className="auth-tabs">{['login','register'].map(value=><button type="button" disabled={pending} aria-pressed={mode===value}
-      className={mode===value?'active':''} key={value} onClick={()=>{setMode(value);setError(null)}}>{t(value==='login'?'Вход':'Регистрация')}</button>)}</div>
-    <form onSubmit={submit}>
-      {mode==='register'&&<label>{t('Име')}<input name="name" autoComplete="name" minLength={2} maxLength={60} required disabled={pending}/></label>}
-      <label>{t('Имейл')}<input name="email" type="email" autoComplete="username" maxLength={254} autoFocus required disabled={pending}/></label>
-      <label>{t('Парола')}<input name="password" type="password" autoComplete={mode==='register'?'new-password':'current-password'} minLength={mode==='register'?6:1}
-        maxLength={30} required disabled={pending}/>{mode==='register'&&<small>{t('Поне 6 знака')}</small>}</label>
-      {error&&<p className="ui-notice" role="alert">{errorText(error)}</p>}
-      <button className="primary-button" disabled={pending} type="submit">{t(pending?'Зареждане…':mode==='register'?'Създай профил':'Вход')}</button>
-    </form>
-    <button className="guest-button" disabled={pending} onClick={onClose}>{t('Продължи като гост')}</button>
-  </dialog>;
-}
+import AuthDialog from './AuthDialog.jsx';
 
 const modes=[['light','Бял режим',Sun],['dark','Тъмен режим',Moon],['system','Системен режим',Monitor]];
 const bonuses=[['forest','Горски режим',Leaf],['sunset','Залез',Sunset]];

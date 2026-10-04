@@ -64,20 +64,25 @@ test('password hashing limits concurrent work and releases capacity afterward',a
   assert.equal(jobs[2].status,'rejected');assert.equal(jobs[2].reason.code,'AUTH_BUSY');
   assert.match(await hashPassword('later testing passphrase'),/^scrypt\$/);
 });
-test('register, login, session expiry and logout use hashed opaque tokens',async()=>{
+test('credentials alone never issue sessions; verified sessions expire and can be revoked',async()=>{
   const repo=repository();let time=new Date('2026-10-03T00:00:00Z');
   const service=createAccountService({database:()=>repo.db,now:()=>time});
   const credentials={email:'test@example.test',name:'Test',password:'correct test passphrase'};
   const registration=await service.register(credentials);
-  assert.equal(registration.token.length,43);
+  assert.equal(registration.token,undefined);
+  assert.equal(repo.sessions.size,0);
   assert.ok(!('passwordHash' in registration.user));
-  assert.ok(repo.sessions.has(tokenHash(registration.token)));
-  assert.ok(!repo.sessions.has(registration.token));
-  assert.equal((await service.current(registration.token)).email,credentials.email);
+  repo.users.get(registration.user.id).isEmailVerified=true;
+  const token=randomBytes(32).toString('base64url');
+  repo.sessions.set(tokenHash(token),{userId:registration.user.id,expiresAt:new Date(time.getTime()+SESSION_MS)});
+  assert.ok(!repo.sessions.has(token));
+  assert.equal((await service.current(token)).email,credentials.email);
   await assert.rejects(service.login({...credentials,password:'incorrect test passphrase'}),error=>error.code==='INVALID_CREDENTIALS');
-  const login=await service.login(credentials);assert.notEqual(login.token,registration.token);
-  await service.logout(login.token);assert.equal(await service.current(login.token),null);
-  time=new Date(time.getTime()+SESSION_MS+1);assert.equal(await service.current(registration.token),null);
+  const login=await service.login(credentials);assert.equal(login.token,undefined);
+  const refreshed=await service.refreshToken(token);assert.notEqual(refreshed.token,token);
+  await service.logout(refreshed.token);assert.equal(await service.current(refreshed.token),null);
+  repo.sessions.set(tokenHash(token),{userId:registration.user.id,expiresAt:new Date(time.getTime()+SESSION_MS)});
+  time=new Date(time.getTime()+SESSION_MS+1);assert.equal(await service.current(token),null);
   assert.equal(await service.current(null),null);
 });
 test('session cookie and bearer token parsing accepts only correctly shaped opaque tokens',()=>{
@@ -102,12 +107,15 @@ test('inactive accounts cannot log in or reuse an existing session',async()=>{
   const repo=repository(),service=createAccountService({database:()=>repo.db});
   const credentials={email:'inactive@example.test',name:'Test',password:'correct testing passphrase'};
   const registration=await service.register(credentials);
-  assert.ok(await service.current(registration.token));
+  repo.users.get(registration.user.id).isEmailVerified=true;
+  const token=randomBytes(32).toString('base64url');
+  repo.sessions.set(tokenHash(token),{userId:registration.user.id,expiresAt:new Date(Date.now()+SESSION_MS)});
+  assert.ok(await service.current(token));
   repo.users.get(registration.user.id).isActive=false;
   await assert.rejects(service.login(credentials),error=>error.status===401&&error.code==='INVALID_CREDENTIALS');
-  assert.equal(await service.current(registration.token),null);assert.equal(repo.sessions.size,1);
+  assert.equal(await service.current(token),null);assert.equal(repo.sessions.size,1);
   repo.users.delete(registration.user.id);
-  assert.equal(await service.current(registration.token),null);
+  assert.equal(await service.current(token),null);
 });
 test('CSRF guard rejects unsafe cross-site requests and permits the app header',()=>{
   const request=(headers={},method='POST')=>({method,get:name=>headers[name]});
@@ -144,17 +152,9 @@ test('message ownership comes from the authenticated account, not the submitted 
   assert.deepEqual(repo.conversations.get(id).messages.map(message=>message.userId),['owner',null]);
   assert.deepEqual((await service.load('owner',id)).messages,[{role:'user',content:'Hello'},{role:'assistant',content:'Hi'}]);
 });
-test('login route sets an HttpOnly cookie and returns access token for Scalar/API testing',async()=>{
-  const token=randomBytes(32).toString('base64url'),service={login:async()=>({token,user:{id:'owner',name:'Test'}}),logout:async()=>{}};
-  const router=createAccountRouter({service,secure:true});
-  const layer=router.stack.find(item=>item.route?.path==='/auth/login');
-  const handler=layer.route.stack.at(-1).handle;
-  const req={body:{},headers:{}},res={cookie(name,value,options){this.cookieInfo={name,value,options};return this},status(){return this},json(body){this.body=body;return this}};
-  await handler(req,res);
-  assert.equal(res.cookieInfo.options.httpOnly,true);assert.equal(res.cookieInfo.options.secure,true);
-  assert.equal(res.cookieInfo.options.sameSite,'strict');
-  assert.equal(res.body.token,token);
-  assert.equal(res.body.user.id,'owner');
+test('history router contains no legacy login/signup/password-reset bypass',()=>{
+  const router=createAccountRouter({service:{}});
+  for(const path of ['/auth/login','/auth/register','/auth/reset-password'])assert.ok(!router.stack.some(item=>item.route?.path===path));
 });
 test('history routes require a session and database failures return a clear error',async()=>{
   const service={current:async()=>null};
@@ -175,52 +175,7 @@ test('selected language is validated and reaches the model instructions',()=>{
   assert.ok(!systemPromptForLanguage('en').includes('Отговаряй на български'));
 });
 
-test('reset-password updates password using active session access token and enforces 6-30 char limit', async () => {
-  const repo = repository();
-  const service = createAccountService({ database: () => repo.db });
-
-  const reg = await service.register({
-    email: 'sessionuser@example.test',
-    name: 'Петър',
-    password: 'initialPass123',
-  });
-
-  const accessToken = reg.token;
-  assert.equal(accessToken.length, 43);
-
-  // 1. Password length boundaries: < 6 rejected, > 30 rejected
-  await assert.rejects(
-    service.resetPassword({ token: accessToken, password: '12345' }),
-    (err) => err.code === 'INVALID_PASSWORD'
-  );
-  await assert.rejects(
-    service.resetPassword({ token: accessToken, password: 'a'.repeat(31) }),
-    (err) => err.code === 'INVALID_PASSWORD'
-  );
-
-  // 2. Invalid or missing token is rejected
-  await assert.rejects(
-    service.resetPassword({ token: 'invalid_access_token_123', password: 'validPassword1' }),
-    (err) => err.code === 'INVALID_TOKEN'
-  );
-  await assert.rejects(
-    service.resetPassword({ token: '', password: 'validPassword1' }),
-    (err) => err.code === 'INVALID_TOKEN'
-  );
-
-  // 3. Valid password between 6 and 30 characters succeeds
-  const res = await service.resetPassword({ token: accessToken, password: 'updatedPass456' });
-  assert.equal(res.ok, true);
-  assert.equal(res.message, 'Паролата е успешно променена.');
-
-  // 4. Verify new password can log in
-  const loginRes = await service.login({ email: 'sessionuser@example.test', password: 'updatedPass456' });
-  assert.ok(loginRes.token);
-
-  // 5. Old password fails
-  await assert.rejects(
-    service.login({ email: 'sessionuser@example.test', password: 'initialPass123' }),
-    (err) => err.code === 'INVALID_CREDENTIALS'
-  );
+test('account service cannot reset passwords with a session token or a legacy signed link',()=>{
+  const service=createAccountService({database:()=>repository().db});
+  assert.equal(service.resetPassword,undefined);
 });
-

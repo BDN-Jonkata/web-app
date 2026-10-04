@@ -1,3 +1,4 @@
+import {emailAuthPaths} from './emailAuth.js';
 /**
  * OpenAPI 3.1.0 specification for the backend API.
  * This specification powers the Scalar API Reference and interactive endpoint testing interface.
@@ -14,7 +15,7 @@ export function createOpenApiSpec(port = 3001) {
     },
   };
 
-  return {
+  const spec = {
     openapi: '3.1.0',
     info: {
       title: 'Energy Bulgaria API',
@@ -112,107 +113,7 @@ export function createOpenApiSpec(port = 3001) {
           },
         },
       },
-      '/api/auth/register': {
-        post: {
-          summary: 'Register new user',
-          description:
-            'Creates a new user account with salted scrypt password hashing, issues an HTTP-only session cookie, and returns the sanitized user profile.',
-          tags: ['Authentication'],
-          parameters: [csrfHeaderParam],
-          requestBody: {
-            required: true,
-            content: {
-              'application/json': {
-                schema: {
-                  type: 'object',
-                  properties: {
-                    email: { type: 'string', format: 'email', example: 'user@example.test' },
-                    password: { type: 'string', minLength: 6, maxLength: 30, example: 'securePass123' },
-                    name: { type: 'string', minLength: 2, maxLength: 60, example: 'Георги Димитров' },
-                    preferences: {
-                      type: 'object',
-                      properties: {
-                        theme: { type: 'string', enum: ['light', 'dark', 'forest', 'sunset', 'system'], example: 'system' },
-                        language: { type: 'string', enum: ['bg', 'en'], example: 'bg' },
-                      },
-                    },
-                  },
-                  required: ['email', 'password', 'name'],
-                },
-              },
-            },
-          },
-          responses: {
-            '201': {
-              description: 'Account successfully registered and session issued with access token.',
-              content: {
-                'application/json': {
-                  schema: {
-                    type: 'object',
-                    properties: {
-                      user: { $ref: '#/components/schemas/UserProfile' },
-                      token: {
-                        type: 'string',
-                        description: 'Opaque session access token (visualized for Scalar/API testing; also issued as HttpOnly cookie).',
-                        example: 'vXz9_session_token_example_1234567890abcdefghij',
-                      },
-                    },
-                    required: ['user', 'token'],
-                  },
-                },
-              },
-            },
-            '400': { description: 'Validation failed (invalid email, short password, or invalid name).' },
-            '409': { description: 'Registration failed because email is already registered.' },
-            '503': { description: 'Authentication is busy processing password hashes.' },
-          },
-        },
-      },
-      '/api/auth/login': {
-        post: {
-          summary: 'User login',
-          description: 'Authenticates user credentials, sets an HttpOnly session cookie, and returns user profile and access token.',
-          tags: ['Authentication'],
-          parameters: [csrfHeaderParam],
-          requestBody: {
-            required: true,
-            content: {
-              'application/json': {
-                schema: {
-                  type: 'object',
-                  properties: {
-                    email: { type: 'string', format: 'email', example: 'user@example.test' },
-                    password: { type: 'string', example: 'a secure long passphrase 12345' },
-                  },
-                  required: ['email', 'password'],
-                },
-              },
-            },
-          },
-          responses: {
-            '200': {
-              description: 'Authentication successful with access token returned.',
-              content: {
-                'application/json': {
-                  schema: {
-                    type: 'object',
-                    properties: {
-                      user: { $ref: '#/components/schemas/UserProfile' },
-                      token: {
-                        type: 'string',
-                        description: 'Opaque session access token (visualized for Scalar/API testing; also issued as HttpOnly cookie).',
-                        example: 'vXz9_session_token_example_1234567890abcdefghij',
-                      },
-                    },
-                    required: ['user', 'token'],
-                  },
-                },
-              },
-            },
-            '401': { description: 'Invalid email or password.' },
-          },
-        },
-      },
+      ...emailAuthPaths(csrfHeaderParam),
       '/api/auth/logout': {
         post: {
           summary: 'User logout',
@@ -272,52 +173,6 @@ export function createOpenApiSpec(port = 3001) {
               },
             },
             '401': { description: 'Missing, invalid, or expired session token.' },
-          },
-        },
-      },
-      '/api/auth/reset-password': {
-        post: {
-          summary: 'Change or reset password',
-          description:
-            'Updates the user password (6-30 characters). Accepts either an active session access token (via Bearer header or token field) or an HMAC reset token received by email.',
-          tags: ['Authentication'],
-          parameters: [csrfHeaderParam],
-          requestBody: {
-            required: true,
-            content: {
-              'application/json': {
-                schema: {
-                  type: 'object',
-                  properties: {
-                    token: {
-                      type: 'string',
-                      description:
-                        'Active session access token OR email reset token. Optional if authenticated via Bearer token.',
-                      example: 'UCdCve4kcgj9UbJSSlAJ72NVt8ca7RQJihbOSR0cLgI',
-                    },
-                    password: { type: 'string', minLength: 6, maxLength: 30, example: 'newPassword123' },
-                  },
-                  required: ['password'],
-                },
-              },
-            },
-          },
-          responses: {
-            '200': {
-              description: 'Password successfully updated.',
-              content: {
-                'application/json': {
-                  schema: {
-                    type: 'object',
-                    properties: {
-                      ok: { type: 'boolean', example: true },
-                      message: { type: 'string', example: 'Паролата е успешно променена.' },
-                    },
-                  },
-                },
-              },
-            },
-            '400': { description: 'Invalid password length or invalid/expired token.' },
           },
         },
       },
@@ -780,14 +635,15 @@ export function createOpenApiSpec(port = 3001) {
           scheme: 'bearer',
           bearerFormat: 'Token',
           description:
-            'Session access token returned upon registration or login. Paste the token here to test authenticated endpoints in Scalar.',
+            'Session access token returned only after verify-code. Paste it here to test authenticated endpoints in Scalar.',
         },
         cookieAuth: {
           type: 'apiKey',
           in: 'cookie',
           name: 'energy_session',
-          description: 'Session cookie automatically set upon registration or login.',
+          description: 'Session cookie set only after email verification.',
         },
+        verificationCookie:{type:'apiKey',in:'cookie',name:'energy_verification',description:'Short-lived HttpOnly challenge cookie; automatically set by register/login/forgot-password.'},
         csrfProtection: {
           type: 'apiKey',
           in: 'header',
@@ -816,4 +672,5 @@ export function createOpenApiSpec(port = 3001) {
       },
     },
   };
+  return spec;
 }

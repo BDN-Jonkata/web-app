@@ -11,6 +11,7 @@ import authRouter from '../services/auth.js';
 export function createApp({
   provider = createAIProvider(),
   simulationRouter = createSimulationRouter(),
+  authenticationRouter = authRouter,
   clientOrigin = process.env.CLIENT_ORIGIN || 'http://localhost:5173',
   port = Number(process.env.PORT) || 3001,
   openApiSpec,
@@ -20,6 +21,9 @@ export function createApp({
   app.openApiSpec = spec;
 
   app.disable('x-powered-by');
+  // Trust only operator-configured proxy addresses/ranges, not arbitrary forwarded IPs.
+  const trusted=process.env.TRUST_PROXY;
+  if(trusted&&trusted!=='true'&&trusted!=='false'&&!/^\d+$/.test(trusted))app.set('trust proxy',trusted.split(',').map(value=>value.trim()));
   app.use(
     cors({
       origin(origin, callback) {
@@ -62,7 +66,7 @@ export function createApp({
   });
 
   app.use('/api', csrfGuard);
-  app.use('/api/auth', authRouter);
+  app.use('/api/auth', authenticationRouter);
   app.use('/api', createAccountRouter());
   app.use('/api/simulation', simulationRouter);
   app.get('/api/health', (_req, res) => {

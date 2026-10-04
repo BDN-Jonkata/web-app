@@ -1,6 +1,7 @@
 import { exec } from 'node:child_process';
 import { createApp } from './app.js';
 import { loadBackendEnvironment } from './environment.js';
+import {createEmailAuthService} from './emailAuth.js';
 
 // Resolve backend/.env independently of where npm was started.
 loadBackendEnvironment();
@@ -27,3 +28,15 @@ app.listen(port, host, () => {
     openInBrowser(`http://${host}:${port}/reference`);
   }
 });
+
+// Password-change alerts survive SMTP failures and are retried after a restart.
+const emailAuth=createEmailAuthService();
+let delivering=false;
+const notificationTimer=setInterval(async()=>{
+  if(delivering)return;
+  delivering=true;
+  try{await emailAuth.deliverPendingNotifications()}
+  catch{/* Missing PostgreSQL/migrations must not crash the guest dashboard. */}
+  finally{delivering=false}
+},60000);
+notificationTimer.unref();

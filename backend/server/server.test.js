@@ -86,18 +86,20 @@ test('server endpoints and scalar integration', async (t) => {
     assert.equal(json.code, 'INVALID_TOKEN');
   });
 
-  await t.test('OpenAPI spec documents bearerAuth and token property in register/login responses for Scalar', () => {
+  await t.test('OpenAPI documents email challenges without tokens until verification', () => {
     assert.ok(openApiSpec.components?.securitySchemes?.bearerAuth);
     assert.equal(openApiSpec.components.securitySchemes.bearerAuth.type, 'http');
     assert.equal(openApiSpec.components.securitySchemes.bearerAuth.scheme, 'bearer');
 
     const registerSchema =
-      openApiSpec.paths['/api/auth/register'].post.responses['201'].content['application/json'].schema;
-    assert.ok(registerSchema.properties.token, 'Register response schema should include token');
+      openApiSpec.paths['/api/auth/register'].post.responses['202'].content['application/json'].schema;
+    assert.equal(registerSchema.properties.token,undefined);
+    assert.equal(registerSchema.properties.verificationRequired.const,true);
 
     const loginSchema =
-      openApiSpec.paths['/api/auth/login'].post.responses['200'].content['application/json'].schema;
-    assert.ok(loginSchema.properties.token, 'Login response schema should include token');
+      openApiSpec.paths['/api/auth/login'].post.responses['202'].content['application/json'].schema;
+    assert.equal(loginSchema.properties.token,undefined);
+    assert.ok(openApiSpec.paths['/api/auth/verify-code'].post.responses['200'].content['application/json'].schema.properties.token);
 
     const regPasswordSchema =
       openApiSpec.paths['/api/auth/register'].post.requestBody.content['application/json'].schema.properties.password;
@@ -106,7 +108,8 @@ test('server endpoints and scalar integration', async (t) => {
 
     assert.equal(openApiSpec.paths['/api/auth/send-verification-email'], undefined);
     assert.equal(openApiSpec.paths['/api/auth/verify-email'], undefined);
-    assert.equal(openApiSpec.paths['/api/auth/forgot-password'], undefined);
+    assert.ok(openApiSpec.paths['/api/auth/forgot-password']);
+    assert.ok(openApiSpec.paths['/api/auth/resend-code']);
     assert.ok(openApiSpec.paths['/api/auth/reset-password']);
   });
 

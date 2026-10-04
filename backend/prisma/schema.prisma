@@ -67,6 +67,7 @@ model User {
   sessions        Session[]
   conversations   Conversation[]
   messages        Message[]
+  authChallenges  AuthChallenge[]
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @default(now()) @updatedAt
 }
@@ -80,6 +81,37 @@ model Session {
 
   @@index([userId])
   @@index([expiresAt])
+}
+
+model AuthChallenge {
+  tokenHash      String      @id
+  userId         String?
+  user           User?       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  purpose        String
+  email          String?
+  codeHash       String
+  credentialHash String
+  language       String      @default("bg")
+  attempts       Int         @default(0)
+  sendCount      Int         @default(1)
+  expiresAt      DateTime
+  lastSentAt     DateTime
+  consumedAt     DateTime?
+  createdAt      DateTime    @default(now())
+
+  @@index([userId, createdAt])
+  @@index([expiresAt])
+}
+
+model EmailNotification {
+  id          String    @id @default(cuid())
+  payload     Json
+  attempts    Int       @default(0)
+  nextAttempt DateTime  @default(now())
+  sentAt      DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([sentAt, nextAttempt])
 }
 
 model Message {
