@@ -58,9 +58,9 @@ export default function AuthDialog({onClose}){
       {verifying&&<label>{t('Код от имейла')}<input className="verification-code" name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" minLength={6} maxLength={6} required disabled={pending||timing.expiresIn===0} aria-describedby="code-help"/>
         <small id="code-help">{t('Кодът е валиден 10 минути и има до 5 опита.')}</small></label>}
       {((!verifying&&!forgot)||(verifying&&forgot))&&<label>{t(verifying?'Нова парола':'Парола')}<input name="password" type="password"
-        autoComplete={mode==='register'||forgot?'new-password':'current-password'} minLength={mode==='login'?1:6} maxLength={30} required disabled={pending}/>
+        autoComplete={mode==='register'||forgot?'new-password':'current-password'} minLength={mode==='login'?1:6} maxLength={128} required disabled={pending}/>
         {mode!=='login'&&<small>{t('Поне 6 знака')}</small>}</label>}
-      {verifying&&forgot&&<label>{t('Повтори новата парола')}<input name="confirmPassword" type="password" autoComplete="new-password" minLength={6} maxLength={30} required disabled={pending}/></label>}
+      {verifying&&forgot&&<label>{t('Повтори новата парола')}<input name="confirmPassword" type="password" autoComplete="new-password" minLength={6} maxLength={128} required disabled={pending}/></label>}
       {notice&&<p className="auth-notice" role="status">{t(notice)}</p>}
       {error&&<p className="ui-notice" role="alert">{errorText(error)}</p>}
       {verifying&&timing.expiresIn===0&&<p className="ui-notice" role="status">{t('Кодът изтече. Върни се назад и поискай нов.')}</p>}

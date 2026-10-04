@@ -5,15 +5,30 @@ import {normalizeState} from '../../shared/chatContract.js';
 import {getDatabase} from './database.js';
 const scrypt=promisify(scryptCallback),cost={N:2**17,r:8,p:1,maxmem:256*1024*1024};
 export const SESSION_COOKIE='energy_session',SESSION_MS=7*24*60*60*1000;
+const MAX_SESSIONS_PER_USER=10;
+// Keep only the newest sessions of a user so the table cannot grow without bound.
+export async function pruneSessions(db,userId,keep=MAX_SESSIONS_PER_USER){
+  const stale=await db.session.findMany({where:{userId},orderBy:{createdAt:'desc'},skip:keep,select:{tokenHash:true}});
+  if(stale.length)await db.session.deleteMany({where:{tokenHash:{in:stale.map(item=>item.tokenHash)}}});
+}
 export const accountError=(status,code,message)=>Object.assign(new Error(message),{status,code});
 export const tokenHash=token=>createHash('sha256').update(token).digest('hex');
 export const publicUser=user=>({id:user.id,email:user.email,name:user.name,isEmailVerified:Boolean(user.isEmailVerified),preferences:normalizePreferences(user.preferences)});
 let activePasswordJobs=0;
+const passwordWaiters=[],MAX_PASSWORD_JOBS=2,MAX_PASSWORD_QUEUE=20;
 async function passwordKey(password,salt){
-  // Each scrypt job is memory-intensive; do not build an unbounded work queue.
-  if(activePasswordJobs>=2)throw accountError(503,'AUTH_BUSY','Входът е временно натоварен. Опитай отново след малко.');
-  activePasswordJobs++;
-  try{return await scrypt(password,salt,64,cost)}finally{activePasswordJobs--}
+  // Each scrypt job is memory-intensive: run a couple at a time and let a short bounded queue wait,
+  // so two parallel requests cannot lock everyone else out.
+  if(activePasswordJobs>=MAX_PASSWORD_JOBS){
+    if(passwordWaiters.length>=MAX_PASSWORD_QUEUE)throw accountError(503,'AUTH_BUSY','Входът е временно натоварен. Опитай отново след малко.');
+    await new Promise(resolve=>passwordWaiters.push(resolve));
+  }else activePasswordJobs++;
+  try{return await scrypt(password,salt,64,cost)}
+  finally{
+    // Hand the slot straight to the next waiter; otherwise release it.
+    const next=passwordWaiters.shift();
+    if(next)next();else activePasswordJobs--;
+  }
 }
 export async function hashPassword(password) {
   const salt=randomBytes(16).toString('hex'),key=await passwordKey(password,salt);
@@ -37,12 +52,18 @@ export function readSessionToken(req) {
   const value = (req?.headers?.cookie || '').split(';').map(part => part.trim()).find(part => part.startsWith(SESSION_COOKIE + '='))?.slice(SESSION_COOKIE.length + 1);
   return value && /^[A-Za-z0-9_-]{43}$/.test(value) ? value : null;
 }
+export const MIN_PASSWORD=6,MAX_PASSWORD=128;
+const COMMON_PASSWORDS=new Set(['123456','1234567','12345678','123456789','1234567890','password','password1','qwerty','qwerty123','111111','000000','abc123','iloveyou','admin123','letmein','parola','парола']);
+// Length is checked before the pattern so oversized input never reaches the regex engine.
+export const isValidEmail=email=>typeof email==='string'&&email.length<=254&&/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+export const isAcceptablePassword=password=>typeof password==='string'&&password.length>=MIN_PASSWORD&&password.length<=MAX_PASSWORD&&!COMMON_PASSWORDS.has(password.toLowerCase());
+export const PASSWORD_MESSAGE='Паролата трябва да е между 6 и 128 знака и да не е често срещана.';
 export function validateCredentials(input,{register=false}={}) {
   const email=typeof input?.email==='string'?input.email.trim().toLowerCase():'';
   const password=typeof input?.password==='string'?input.password:'';
   const name=typeof input?.name==='string'?input.name.trim():'';
-  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)||email.length>254)throw accountError(400,'INVALID_EMAIL','Въведи валиден имейл.');
-  if(password.length>30||password.length<(register?6:1))throw accountError(400,'INVALID_PASSWORD','Паролата трябва да е между 6 и 30 знака.');
+  if(!isValidEmail(email))throw accountError(400,'INVALID_EMAIL','Въведи валиден имейл.');
+  if(register?!isAcceptablePassword(password):(password.length>MAX_PASSWORD||password.length<1))throw accountError(400,'INVALID_PASSWORD',PASSWORD_MESSAGE);
   if(register&&(name.length<2||name.length>60))throw accountError(400,'INVALID_NAME','Името трябва да е между 2 и 60 знака.');
   return {email,password,name};
 }
@@ -62,6 +83,7 @@ export function createAccountService({database=getDatabase,now=()=>new Date()}={
   async function issueSession(db,user){
     const token=randomBytes(32).toString('base64url');
     await db.session.create({data:{tokenHash:tokenHash(token),userId:user.id,expiresAt:new Date(now().getTime()+SESSION_MS)}});
+    await pruneSessions(db,user.id);
     return {user:publicUser(user),token};
   }
   return {

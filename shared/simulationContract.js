@@ -3,6 +3,11 @@ import { CITIES, SITES, NUCLEAR, SEASONS } from './energy.js';
 const own = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
 const plain = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 
+const MAX_FRAMES = 200;
+const MAX_LIST_ITEMS = 50;
+// Colors reach inline styles in the browser: accept only hex colors, never url() or other CSS.
+const safeColor = value => (typeof value === 'string' && /^#[0-9a-fA-F]{3,8}$/.test(value.trim()) ? value.trim() : undefined);
+
 const validSiteIds = new Set(SITES.map(s => s.id));
 const validCityIds = new Set(CITIES.map(c => c.id));
 const validEntityIds = new Set([...validSiteIds, ...validCityIds, NUCLEAR.id]);
@@ -36,13 +41,13 @@ export function sanitizeStats(stats) {
 
   let sectors = [];
   if (Array.isArray(stats.sectors)) {
-    sectors = stats.sectors
+    sectors = stats.sectors.slice(0, MAX_LIST_ITEMS)
       .filter(s => plain(s) && typeof s.label === 'string' && typeof s.mw === 'number' && Number.isFinite(s.mw) && s.mw >= 0)
       .map(s => ({
         label: s.label.trim(),
         mw: Math.round(s.mw),
         pct: typeof s.pct === 'number' && Number.isFinite(s.pct) ? Math.max(0, Math.min(1, s.pct)) : (demand > 0 ? s.mw / demand : 0),
-        color: typeof s.color === 'string' ? s.color : '#53615b',
+        color: safeColor(s.color) || '#53615b',
       }));
   }
 
@@ -101,14 +106,14 @@ export function sanitizeMap(map) {
 
   const flows = [];
   if (Array.isArray(map.flows)) {
-    for (const flow of map.flows) {
+    for (const flow of map.flows.slice(0, MAX_LIST_ITEMS)) {
       if (plain(flow) && typeof flow.from === 'string' && typeof flow.to === 'string') {
         const mw = typeof flow.mw === 'number' && Number.isFinite(flow.mw) && flow.mw >= 0 ? flow.mw : 0;
         flows.push({
           from: flow.from,
           to: flow.to,
           mw,
-          color: typeof flow.color === 'string' ? flow.color : undefined,
+          color: safeColor(flow.color),
         });
       }
     }
@@ -233,7 +238,7 @@ export function normalizeSimulationPayload(input) {
   // Frames: multi-frame timeline or single frame
   let rawFrames = [];
   if (Array.isArray(input.frames) && input.frames.length > 0) {
-    rawFrames = input.frames;
+    rawFrames = input.frames.slice(0, MAX_FRAMES);
   } else if (plain(input.components)) {
     rawFrames = [{
       step: 0,
@@ -262,7 +267,7 @@ export function normalizeSimulationPayload(input) {
   }
 
   return {
-    id: typeof input.id === 'string' ? input.id : crypto.randomUUID(),
+    id: typeof input.id === 'string' && /^[A-Za-z0-9_-]{1,80}$/.test(input.id) ? input.id : crypto.randomUUID(),
     prompt,
     decision,
     scenario,

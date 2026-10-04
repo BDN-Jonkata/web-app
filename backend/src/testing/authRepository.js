@@ -28,10 +28,10 @@ export function authRepository(){
         const record=[...records.values()].find(item=>matches(item,where));
         return record?{...record,...(include?.user?{user:tables.user.get(record.userId)?{...tables.user.get(record.userId)}:null}:{})}:null;
       },
-      async findMany({where,orderBy,take}={}){
+      async findMany({where,orderBy,take,skip}={}){
         let result=[...records.values()].filter(item=>matches(item,where));
         if(orderBy){const [key,direction]=Object.entries(orderBy)[0];result.sort((a,b)=>(a[key]-b[key])*(direction==='desc'?-1:1))}
-        if(take)result=result.slice(0,take);return result.map(item=>({...item}));
+        if(skip)result=result.slice(skip);if(take)result=result.slice(0,take);return result.map(item=>({...item}));
       },
       async update({where,data}){const record=[...records.values()].find(item=>matches(item,where));if(!record)throw Error('Fixture missing');return update(record,data)},
       async updateMany({where,data}){let count=0;for(const record of records.values())if(matches(record,where)){update(record,data);count++}return {count}},

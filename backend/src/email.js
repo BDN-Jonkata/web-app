@@ -1,7 +1,7 @@
 import nodemailer from 'nodemailer';
 import {isIP} from 'node:net';
+import {renderCodeEmail,renderPasswordChangedEmail} from './emailTemplates.js';
 
-const escape=value=>String(value).replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
 const failure=(code,message)=>Object.assign(new Error(message),{status:503,code});
 const clean=value=>String(value||'').replace(/[\r\n\x00-\x1f]/g,' ').slice(0,256);
 
@@ -35,13 +35,6 @@ export async function lookupLocation(ip,{env=process.env,fetchImpl=globalThis.fe
   }catch{return {kind:'unknown',label:''}}
 }
 
-function htmlMessage(title,text,code){
-  return '<!doctype html><html><body style="font-family:system-ui,sans-serif;background:#edf1eb;padding:24px;color:#20342c">'+
-    '<main style="max-width:540px;margin:auto;background:#fafbf7;padding:28px;border-radius:16px"><h2>'+escape(title)+'</h2>'+
-    (code?'<p style="font-size:32px;letter-spacing:8px;font-weight:700">'+escape(code)+'</p>':'')+
-    '<p style="white-space:pre-line;line-height:1.6">'+escape(text)+'</p></main></body></html>';
-}
-
 export function createEmailService({env=process.env,transport,fetchImpl=globalThis.fetch}={}){
   let smtp=transport;
   function ensureConfigured(){
@@ -54,31 +47,22 @@ export function createEmailService({env=process.env,transport,fetchImpl=globalTh
       connectionTimeout:4000,greetingTimeout:4000,socketTimeout:6000,
       disableFileAccess:true,disableUrlAccess:true,logger:false,debug:false});
   }
-  async function send(email,title,text,code){
+  async function send(email,{subject,text,html}){
     ensureConfigured();
     try {
-      await smtp.sendMail({from:env.EMAIL_FROM||'test@energy.test',to:email,subject:title,
-        text:(code?code+'\n\n':'')+text,html:htmlMessage(title,text,code)});
+      await smtp.sendMail({from:env.EMAIL_FROM||'test@energy.test',to:email,subject,text,html});
     }catch{throw failure('EMAIL_UNAVAILABLE','Имейлът не беше изпратен. Опитай отново след малко.')}
   }
   return {
     ensureConfigured,
     async sendCode({email,name,language='bg',purpose,code}){
-      const en=language==='en',reset=purpose==='RESET_PASSWORD';
-      const title=en?(reset?'Reset your password — Energy Bulgaria':purpose==='SIGNUP'?'Confirm your account — Energy Bulgaria':'Confirm your login — Energy Bulgaria'):
-        reset?'Възстановяване на парола — Енергия България':purpose==='SIGNUP'?'Потвърди профила си — Енергия България':'Потвърди входа — Енергия България';
-      const text=en?`Hello ${name},\nEnter this code in the same browser where you requested it. It expires in 10 minutes. Never share it.\nIf you did not request this, ignore this email.`:
-        `Здравей, ${name},\nВъведи кода в същия браузър, от който го поиска. Валиден е 10 минути. Не го споделяй.\nАко не си направил тази заявка, игнорирай имейла.`;
-      await send(email,title,text,code);
+      await send(email,renderCodeEmail({language,name,purpose,code}));
     },
     async sendPasswordChanged({email,name,language='bg',changedAt,ip,device}){
       const location=await lookupLocation(ip,{env,fetchImpl}),en=language==='en';
       const where=location.kind==='local'?(en?'Local/private network':'Локална/частна мрежа'):
         location.kind==='approximate'?location.label:(en?'Unavailable':'Недостъпно');
-      const title=en?'Your password was changed — Energy Bulgaria':'Паролата ти беше променена — Енергия България';
-      const text=en?`Hello ${name},\nYour account password was changed.\nTime (UTC): ${changedAt}\nApproximate location: ${where}\nIP address: ${ip}\nDevice/browser: ${device}\nIP location is approximate and may reflect a VPN, not your actual location.\nIf this was not you, use “Forgot password?” immediately to recover your account. All previous sessions were signed out.`:
-        `Здравей, ${name},\nПаролата на профила ти беше променена.\nВреме (UTC): ${changedAt}\nПриблизително местоположение: ${where}\nIP адрес: ${ip}\nУстройство/браузър: ${device}\nМестоположението по IP е приблизително и може да показва VPN, а не реалното ти място.\nАко не си ти, използвай „Забравена парола?“ веднага за възстановяване. Всички предишни сесии са прекратени.`;
-      await send(email,title,text);
+      await send(email,renderPasswordChangedEmail({language,name,changedAt,where,ip,device}));
     }
   };
 }

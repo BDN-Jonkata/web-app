@@ -1,4 +1,6 @@
 import { Router } from 'express';
+import { timingSafeEqual } from 'node:crypto';
+import { createChatLimiter } from './chat.js';
 import { normalizeSimulationPayload } from '../../shared/simulationContract.js';
 
 export function createInMemorySimulationStore() {
@@ -41,11 +43,30 @@ export function createInMemorySimulationStore() {
   };
 }
 
-export function createSimulationRouter({ store = createInMemorySimulationStore() } = {}) {
+const MAX_STREAMS = 100;
+
+// When SIMULATION_API_KEY is set, only callers that send it (X-Api-Key) may replace or reset the shared simulation.
+// In production the key is mandatory: without one, writes are refused instead of left open to anyone.
+function createWriteGuard(apiKey, production) {
+  const expected = apiKey ? Buffer.from(apiKey) : null;
+  return (req, res, next) => {
+    if (!expected) {
+      if (!production) return next();
+      return res.status(503).json({ code: 'SIMULATION_WRITES_DISABLED', error: 'Записът на симулации е изключен: липсва SIMULATION_API_KEY.' });
+    }
+    const given = Buffer.from(String(req.get('X-Api-Key') || ''));
+    if (given.length === expected.length && timingSafeEqual(given, expected)) return next();
+    return res.status(401).json({ code: 'API_KEY_REQUIRED', error: 'Нужен е валиден API ключ за тази операция.' });
+  };
+}
+
+export function createSimulationRouter({ store = createInMemorySimulationStore(), apiKey = process.env.SIMULATION_API_KEY, writeLimit = 30, production = process.env.NODE_ENV === 'production' } = {}) {
   const router = Router();
+  const writeGuard = createWriteGuard(apiKey, production);
+  const writeLimiter = createChatLimiter({ limit: writeLimit });
 
   // Ingest an AI simulation decision / run (supports single frame or multi-frame timeline)
-  router.post('/decision', (req, res) => {
+  router.post('/decision', writeLimiter, writeGuard, (req, res) => {
     let normalized;
     try {
       normalized = normalizeSimulationPayload(req.body);
@@ -77,7 +98,7 @@ export function createSimulationRouter({ store = createInMemorySimulationStore()
   });
 
   // Reset active simulation to empty baseline
-  router.post('/reset', (_req, res) => {
+  router.post('/reset', writeLimiter, writeGuard, (_req, res) => {
     store.reset();
     return res.status(200).json({
       success: true,
@@ -87,6 +108,9 @@ export function createSimulationRouter({ store = createInMemorySimulationStore()
 
   // Server-Sent Events stream for real-time frontend updates
   router.get('/events', (req, res) => {
+    if (store.clientCount() >= MAX_STREAMS) {
+      return res.status(503).json({ code: 'TOO_MANY_STREAMS', error: 'Твърде много активни връзки. Опитай по-късно.' });
+    }
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
